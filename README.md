@@ -100,6 +100,7 @@ Important:
 - In this plugin, a checked ladder box only means "apply this maxrate override when PeerTube already decided to build this rendition."
 - All overrides start disabled by default, so administrators can opt in only to the pieces they actually want.
 - Disabled value fields stay visible but are dimmed and non-editable so the current saved value is still visible without implying that it is active.
+- Numeric fields snap to their documented range when you leave the field. The server clamps these values anyway, so this keeps the number on screen equal to the number that runs. Clearing a field restores its default.
 
 The default cap values are:
 
@@ -224,6 +225,10 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
 
 ### 0.7.2
 
+- Clamp numeric settings in the admin UI. The server clamps on read, so an
+  out-of-range entry used to be stored and displayed as typed while ffmpeg
+  silently got something else — a CRF of `99` ran as `30`. Fields now snap to
+  their range on blur, and an emptied field falls back to its default.
 - Fix the admin settings UI, which had never worked on PeerTube 8.x. The client
   script looked its controls up with `document.getElementsByName()`, but 8.x
   renders plugin settings with an `id` and no `name`, so nothing matched: no

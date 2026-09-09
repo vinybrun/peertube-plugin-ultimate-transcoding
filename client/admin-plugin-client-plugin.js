@@ -1,11 +1,53 @@
 const RESOLUTIONS = [ 144, 240, 360, 480, 720, 1080, 1440, 2160 ]
 
 const DEPENDENT_FIELDS = buildDependentFields()
+// Numeric bounds, mirroring the clampInt/clampFloat calls in main.js. The server
+// clamps when it *reads* a setting, so without this the admin sees the number
+// they typed while ffmpeg quietly gets a different one. Kept honest by
+// test/client-ranges.test.js, which parses both files and compares.
+const NUMERIC_RANGES = {
+  'vod-crf': { min: 16, max: 30, fallback: 21 },
+  'vod-audio-kbps': { min: 64, max: 512, fallback: 320 },
+  'vod-bufsize-multiplier': { min: 1, max: 10, fallback: 2, float: true },
+  'vod-original-resolution-kbps': { min: 500, max: 50000, fallback: 12000 },
+  'vod-libx264-priority': { min: 1, max: 10000, fallback: 100 },
+  'vod-aac-priority': { min: 1, max: 10000, fallback: 100 },
+  'vod-libfdk-aac-priority': { min: 1, max: 10000, fallback: 110 }
+}
+
+const RESOLUTION_KBPS_RANGE = { min: 100, max: 50000 }
+
+const RESOLUTION_DEFAULT_KBPS = {
+  144: 250,
+  240: 400,
+  360: 700,
+  480: 1200,
+  720: 2500,
+  1080: 4200,
+  1440: 6500,
+  2160: 10000
+}
+
+function buildNumericRanges () {
+  const ranges = Object.assign({}, NUMERIC_RANGES)
+
+  for (const resolution of RESOLUTIONS) {
+    ranges[getResolutionSettingName(resolution, 'kbps')] = {
+      min: RESOLUTION_KBPS_RANGE.min,
+      max: RESOLUTION_KBPS_RANGE.max,
+      fallback: RESOLUTION_DEFAULT_KBPS[resolution]
+    }
+  }
+
+  return ranges
+}
+
 // Settings that stand alone instead of being gated by an enable- checkbox.
 const STANDALONE_SETTINGS = [
   'vod-audio-copy-mode',
   'vod-audio-sample-rate'
 ]
+const RANGES = buildNumericRanges()
 const OWN_SETTING_NAMES = Array.from(new Set(
   Object.keys(DEPENDENT_FIELDS)
     .concat(Object.values(DEPENDENT_FIELDS))
@@ -64,6 +106,46 @@ function parseBoolean (value, fallback) {
 // PeerTube 8.x renders plugin settings with an `id` and no `name` attribute, so
 // document.getElementsByName() finds nothing at all. Match either, so this keeps
 // working on the older markup too.
+function getControlSettingName (control) {
+  if (!control || !control.getAttribute) return ''
+
+  return control.getAttribute('id') || control.getAttribute('name') || ''
+}
+
+// Snap a numeric field to the range the server will enforce anyway, so the value
+// on screen is the value that runs. Only on 'change' (blur / Enter), never on
+// 'input', so typing "2" on the way to "25" is not clamped mid-keystroke.
+function clampNumericControl (control) {
+  if (!control || !control.tagName) return
+  if (control.tagName.toLowerCase() !== 'input') return
+  if (control.disabled || control.readOnly) return
+
+  const range = RANGES[getControlSettingName(control)]
+  if (!range) return
+
+  const raw = String(control.value === null || control.value === undefined ? '' : control.value).trim()
+  const parsed = range.float ? parseFloat(raw) : parseInt(raw, 10)
+
+  const next = Number.isFinite(parsed)
+    ? Math.max(range.min, Math.min(range.max, parsed))
+    : range.fallback
+
+  if (String(next) === raw) return
+
+  control.value = String(next)
+
+  // Let Angular's form model pick the corrected value up
+  if (typeof Event === 'function') {
+    control.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+}
+
+function handleChangeEvent (event) {
+  if (event && event.target) clampNumericControl(event.target)
+
+  scheduleRender()
+}
+
 function getNamedControls (name) {
   const selector = '[id="' + name + '"], [name="' + name + '"]'
 
@@ -582,7 +664,7 @@ function register ({ registerHook }) {
   })
 
   if (!listenersBound) {
-    document.addEventListener('change', scheduleRender, true)
+    document.addEventListener('change', handleChangeEvent, true)
     document.addEventListener('input', scheduleRender, true)
     listenersBound = true
   }
