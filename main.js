@@ -7,6 +7,13 @@ const {
   buildAudioReencodeOptions
 } = require('./audio-policy')
 
+const {
+  PRESETS,
+  normalizePreset,
+  shouldCopyVideo,
+  buildVideoReencodeOptions
+} = require('./video-policy')
+
 const RESOLUTIONS = [ 144, 240, 360, 480, 720, 1080, 1440, 2160 ]
 
 const DEFAULTS = {
@@ -162,8 +169,8 @@ function parseOptionLines(value) {
     .filter(line => line.length > 0 && !line.startsWith('#'))
 }
 
-function normalizePreset(value) {
-  return [ 'fast', 'medium', 'slow', 'slower', 'veryslow' ].includes(value) ? value : DEFAULTS.preset
+function normalizePresetValue (value) {
+  return normalizePreset(value, DEFAULTS.preset)
 }
 
 function normalizeVideoProfile(value) {
@@ -223,7 +230,7 @@ function normalizeSettings(values) {
   config.toggles.libfdkAacPriority = parseBoolean(values[getToggleName('vod-libfdk-aac-priority')], DEFAULTS.toggles.libfdkAacPriority)
 
   config.crf = clampInt(values['vod-crf'], 16, 30, DEFAULTS.crf)
-  config.preset = normalizePreset(values['vod-preset'])
+  config.preset = normalizePresetValue(values['vod-preset'])
   config.audioKbps = clampInt(values['vod-audio-kbps'], 64, 512, DEFAULTS.audioKbps)
   config.audioCopyMode = normalizeAudioCopyMode(
     values['vod-audio-copy-mode'],
@@ -384,13 +391,7 @@ function registerQualitySettings(registerSetting) {
     type: 'select',
     default: DEFAULTS.preset,
     private: true,
-    options: [
-      { label: 'fast', value: 'fast' },
-      { label: 'medium', value: 'medium' },
-      { label: 'slow', value: 'slow' },
-      { label: 'slower', value: 'slower' },
-      { label: 'veryslow', value: 'veryslow' }
-    ]
+    options: PRESETS.map(preset => ({ label: preset, value: preset }))
   })
 
   registerToggle(
@@ -487,7 +488,7 @@ function registerCompatibilitySettings(registerSetting) {
     registerSetting,
     'vod-copy-video-if-possible',
     'Copy video when possible',
-    'Allow stream copy instead of video re-encoding when PeerTube says the video can be reused safely.'
+    'Allow stream copy only when PeerTube will not scale the frame. On PeerTube 8.x every video rung adds <code>scale=w=-2:h=N</code>, and ffmpeg refuses to combine that with <code>-c:v copy</code>. This checkbox therefore does not copy 720p/1080p VOD or live variants; leaving it on will no longer fail the job.'
   )
 
   registerSetting({
@@ -657,6 +658,107 @@ function applyEncoderPriorities(transcodingManager, config) {
   }
 }
 
+function buildVideoConfig () {
+  const config = runtimeConfig
+
+  if (config.toggles.videoProfile && config.toggles.pixelFormat) {
+    return Object.assign({}, config, {
+      videoProfile: getProfileForPixelFormat(config.pixelFormat, config.videoProfile)
+    })
+  }
+
+  return config
+}
+
+const videoBuilder = async ({ resolution, canCopyVideo, fps, inputBitrate, inputRatio, streamNum }) => {
+  if (shouldCopyVideo({
+    copyVideoIfPossible: runtimeConfig.copyVideoIfPossible,
+    canCopyVideo,
+    resolution
+  })) {
+    return { copy: true }
+  }
+
+  const options = {}
+  const outputOptions = buildVideoReencodeOptions({
+    config: buildVideoConfig(),
+    resolution,
+    fps,
+    inputBitrate,
+    inputRatio,
+    streamNum,
+    maxrateKbps: getResolutionCapKbps(resolution, runtimeConfig)
+  })
+
+  if (outputOptions.length > 0) {
+    options.outputOptions = outputOptions
+  }
+
+  if (runtimeConfig.toggles.videoInputOptions && runtimeConfig.videoInputOptions.length > 0) {
+    options.inputOptions = runtimeConfig.videoInputOptions
+  }
+
+  if (runtimeConfig.toggles.scaleFilterName && runtimeConfig.scaleFilterName) {
+    options.scaleFilter = { name: runtimeConfig.scaleFilterName }
+  }
+
+  return options
+}
+
+const audioBuilder = async ({ canCopyAudio, inputProbe, resolution, streamNum }) => {
+  const audioInfo = inspectAudioStream(inputProbe)
+
+  if (shouldCopyAudio({
+    mode: runtimeConfig.audioCopyMode,
+    canCopyAudio,
+    resolution,
+    audioInfo
+  })) {
+    return { copy: true }
+  }
+
+  const outputOptions = []
+  const options = {}
+
+  outputOptions.push(...buildAudioReencodeOptions({
+    audioKbps: runtimeConfig.toggles.audioKbps ? runtimeConfig.audioKbps : null,
+    audioInfo,
+    sampleRate: runtimeConfig.audioSampleRate,
+    streamNum
+  }))
+
+  if (runtimeConfig.toggles.audioOutputOptions && runtimeConfig.audioOutputOptions.length > 0) {
+    outputOptions.push(...runtimeConfig.audioOutputOptions)
+  }
+
+  if (outputOptions.length > 0) {
+    options.outputOptions = outputOptions
+  }
+
+  if (runtimeConfig.toggles.audioInputOptions && runtimeConfig.audioInputOptions.length > 0) {
+    options.inputOptions = runtimeConfig.audioInputOptions
+  }
+
+  return options
+}
+
+function installProfiles (transcodingManager) {
+  if (typeof transcodingManager.removeAllProfilesAndEncoderPriorities === 'function') {
+    transcodingManager.removeAllProfilesAndEncoderPriorities()
+  }
+
+  const profileName = 'ultimate-transcoding'
+
+  transcodingManager.addVODProfile('libx264', profileName, videoBuilder)
+  transcodingManager.addVODProfile('aac', profileName, audioBuilder)
+  transcodingManager.addVODProfile('libfdk_aac', profileName, audioBuilder)
+  transcodingManager.addLiveProfile('libx264', profileName, videoBuilder)
+  transcodingManager.addLiveProfile('aac', profileName, audioBuilder)
+  transcodingManager.addLiveProfile('libfdk_aac', profileName, audioBuilder)
+
+  applyEncoderPriorities(transcodingManager, runtimeConfig)
+}
+
 async function register ({ transcodingManager, registerSetting, settingsManager }) {
   registerOverviewSection(registerSetting)
   registerQualitySettings(registerSetting)
@@ -670,111 +772,10 @@ async function register ({ transcodingManager, registerSetting, settingsManager 
   settingsManager.onSettingsChange(settings => {
     rawRuntimeSettings = Object.assign({}, rawRuntimeSettings, settings)
     runtimeConfig = normalizeSettings(rawRuntimeSettings)
+    installProfiles(transcodingManager)
   })
 
-  const profileName = 'ultimate-transcoding'
-
-  const videoBuilder = async ({ resolution, canCopyVideo }) => {
-    if (runtimeConfig.copyVideoIfPossible && canCopyVideo) {
-      return { copy: true }
-    }
-
-    const outputOptions = []
-    const options = {}
-    const maxrate = getResolutionCapKbps(resolution, runtimeConfig)
-
-    if (runtimeConfig.toggles.crf) {
-      outputOptions.push(`-crf ${runtimeConfig.crf}`)
-    }
-
-    if (runtimeConfig.toggles.preset) {
-      outputOptions.push(`-preset ${runtimeConfig.preset}`)
-    }
-
-    if (runtimeConfig.toggles.videoProfile) {
-      const profile = runtimeConfig.toggles.pixelFormat
-        ? getProfileForPixelFormat(runtimeConfig.pixelFormat, runtimeConfig.videoProfile)
-        : runtimeConfig.videoProfile
-
-      outputOptions.push(`-profile:v ${profile}`)
-    }
-
-    if (maxrate !== null) {
-      outputOptions.push(`-maxrate ${maxrate}k`)
-
-      if (runtimeConfig.toggles.bufsizeMultiplier) {
-        outputOptions.push(`-bufsize ${Math.round(maxrate * runtimeConfig.bufsizeMultiplier)}k`)
-      }
-    }
-
-    if (runtimeConfig.toggles.pixelFormat) {
-      outputOptions.push(`-pix_fmt ${runtimeConfig.pixelFormat}`)
-    }
-
-    if (runtimeConfig.toggles.videoOutputOptions && runtimeConfig.videoOutputOptions.length > 0) {
-      outputOptions.push(...runtimeConfig.videoOutputOptions)
-    }
-
-    if (outputOptions.length > 0) {
-      options.outputOptions = outputOptions
-    }
-
-    if (runtimeConfig.toggles.videoInputOptions && runtimeConfig.videoInputOptions.length > 0) {
-      options.inputOptions = runtimeConfig.videoInputOptions
-    }
-
-    if (runtimeConfig.toggles.scaleFilterName && runtimeConfig.scaleFilterName) {
-      options.scaleFilter = { name: runtimeConfig.scaleFilterName }
-    }
-
-    return options
-  }
-
-  const audioBuilder = async ({ canCopyAudio, inputProbe, resolution, streamNum }) => {
-    const audioInfo = inspectAudioStream(inputProbe)
-
-    if (shouldCopyAudio({
-      mode: runtimeConfig.audioCopyMode,
-      canCopyAudio,
-      resolution,
-      audioInfo
-    })) {
-      return { copy: true }
-    }
-
-    const outputOptions = []
-    const options = {}
-
-    outputOptions.push(...buildAudioReencodeOptions({
-      audioKbps: runtimeConfig.toggles.audioKbps ? runtimeConfig.audioKbps : null,
-      audioInfo,
-      sampleRate: runtimeConfig.audioSampleRate,
-      streamNum
-    }))
-
-    if (runtimeConfig.toggles.audioOutputOptions && runtimeConfig.audioOutputOptions.length > 0) {
-      outputOptions.push(...runtimeConfig.audioOutputOptions)
-    }
-
-    if (outputOptions.length > 0) {
-      options.outputOptions = outputOptions
-    }
-
-    if (runtimeConfig.toggles.audioInputOptions && runtimeConfig.audioInputOptions.length > 0) {
-      options.inputOptions = runtimeConfig.audioInputOptions
-    }
-
-    return options
-  }
-
-  transcodingManager.addVODProfile('libx264', profileName, videoBuilder)
-  transcodingManager.addVODProfile('aac', profileName, audioBuilder)
-  transcodingManager.addVODProfile('libfdk_aac', profileName, audioBuilder)
-  transcodingManager.addLiveProfile('libx264', profileName, videoBuilder)
-  transcodingManager.addLiveProfile('aac', profileName, audioBuilder)
-  transcodingManager.addLiveProfile('libfdk_aac', profileName, audioBuilder)
-
-  applyEncoderPriorities(transcodingManager, runtimeConfig)
+  installProfiles(transcodingManager)
 }
 
 async function unregister () {

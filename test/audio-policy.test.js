@@ -54,6 +54,25 @@ test('treats VBR AAC with no stream bitrate as copy-safe', () => {
   assert.equal(isSafeToCopyAac(info), true)
 })
 
+test('does not use container bitrate when a video stream is present', () => {
+  const info = inspectAudioStream(probe({ bitrate: undefined, formatBitrate: '8000000' }))
+  assert.equal(info.bitrate, null)
+})
+
+test('uses container bitrate only for audio-only files', () => {
+  const info = inspectAudioStream({
+    streams: [ { codec_type: 'audio', codec_name: 'flac', channel_layout: 'stereo', channels: 2 } ],
+    format: { bit_rate: '400000' }
+  })
+  assert.equal(info.bitrate, 400000)
+})
+
+test('refuses to copy HE-AAC', () => {
+  assert.equal(isSafeToCopyAac(inspectAudioStream(probe({ profile: 'HE-AAC' }))), false)
+  assert.equal(isSafeToCopyAac(inspectAudioStream(probe({ profile: 'HE-AACv2' }))), false)
+  assert.equal(isSafeToCopyAac(inspectAudioStream(probe({ profile: 'LC' }))), true)
+})
+
 test('refuses to copy surround or unknown layouts', () => {
   assert.equal(isSafeToCopyAac(inspectAudioStream(probe({ channelLayout: 'quad', channels: 4 }))), false)
   assert.equal(isSafeToCopyAac(inspectAudioStream(probe({ channelLayout: 'unknown' }))), false)
@@ -106,6 +125,21 @@ test('re-encode options force stereo AAC-LC and an explicit bitrate', () => {
     '-b:a 320k',
     '-ar 44100',
     '-profile:a aac_low'
+  ])
+})
+
+test('suffixes live audio flags', () => {
+  const options = buildAudioReencodeOptions({
+    audioKbps: 320,
+    sampleRate: '44100',
+    streamNum: 0
+  })
+
+  assert.deepEqual(options, [
+    '-channel_layout:0 stereo',
+    '-b:a:0 320k',
+    '-ar:0 44100',
+    '-profile:a:0 aac_low'
   ])
 })
 

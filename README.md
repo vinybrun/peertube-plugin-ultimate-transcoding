@@ -68,7 +68,7 @@ These settings model the common generated FFmpeg flags directly:
 | Setting | Generated flag or API field | Notes |
 | --- | --- | --- |
 | Video quality (CRF) | `-crf` | Lower means higher quality and larger files. |
-| Encoder speed / compression preset | `-preset` | Slower presets are usually more storage-efficient. |
+| Encoder speed / compression preset | `-preset` | `ultrafast` through `veryslow`, including PeerTube’s `veryfast`. |
 | Audio bitrate | `-b:a` | Used when audio is re-encoded. Range is 64 to 512 kbps. |
 | Audio sample rate | `-ar` | Keep the source rate, or force 44100 / 48000. |
 | Rate-control buffer multiplier | `-bufsize` | Computed from each rendition maxrate. |
@@ -186,6 +186,15 @@ ffprobe -hide_banner -select_streams a:0 \
 - Existing installs that only had "Copy audio when possible" checked are migrated to **Copy only when PeerTube allows it**. Switch them to **Prefer compatible AAC** if you want split-audio jobs to keep a 320+ kbps source.
 
 ## Changelog
+
+### 0.7.1
+
+- Do not copy video when PeerTube will apply `scale=w=-2:h=N`. That combination made ffmpeg fail the job (`Filtergraph was specified, but codec copy was selected`).
+- Accept the full x264 preset list, including `veryfast` (PeerTube’s own default). Unknown values no longer silently become `slow`.
+- When no video override is enabled, emit PeerTube’s stock x264 ladder (`veryfast`, maxrate, bufsize, B-frames) instead of an empty builder.
+- Suffix live video/audio flags with the stream index.
+- Ignore container bitrate when a video track exists; do not treat HE-AAC as copy-safe.
+- Re-apply encoder priorities when settings are saved, without a PeerTube restart.
 
 ### 0.7.0
 

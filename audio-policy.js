@@ -21,6 +21,7 @@ function inspectAudioStream (inputProbe) {
   const audioStream = inputProbe.streams.find(stream => stream.codec_type === 'audio')
   if (!audioStream) return null
 
+  const hasVideo = inputProbe.streams.some(stream => stream.codec_type === 'video')
   const formatBitrate = inputProbe.format && inputProbe.format.bit_rate
     ? parsePositiveInt(inputProbe.format.bit_rate)
     : null
@@ -28,15 +29,21 @@ function inspectAudioStream (inputProbe) {
   return {
     codec: audioStream.codec_name || '',
     profile: audioStream.profile || '',
-    bitrate: parsePositiveInt(audioStream.bit_rate) || formatBitrate,
+    bitrate: parsePositiveInt(audioStream.bit_rate) || (hasVideo ? null : formatBitrate),
     sampleRate: parsePositiveInt(audioStream.sample_rate),
     channels: parsePositiveInt(audioStream.channels),
     channelLayout: audioStream.channel_layout || ''
   }
 }
 
+function isHeAacProfile (profile) {
+  const value = String(profile || '').toLowerCase()
+  return value.includes('he') || value.includes('sbr') || value.includes('parametric')
+}
+
 function isSafeToCopyAac (audioInfo) {
   if (!audioInfo || audioInfo.codec !== 'aac') return false
+  if (isHeAacProfile(audioInfo.profile)) return false
 
   const layout = audioInfo.channelLayout
   if (!layout || layout === 'unknown' || layout === 'quad') return false
@@ -97,7 +104,7 @@ function buildAudioReencodeOptions (options) {
   const outputOptions = []
 
   if (forceStereo) {
-    outputOptions.push('-channel_layout stereo')
+    outputOptions.push(`${buildStreamSuffix('-channel_layout', streamNum)} stereo`)
   }
 
   const bitrate = audioKbps || getFallbackAudioKbps(audioInfo)
@@ -120,6 +127,7 @@ module.exports = {
   PEERTUBE_MAX_AUDIO_KBPS,
   normalizeAudioCopyMode,
   inspectAudioStream,
+  isHeAacProfile,
   isSafeToCopyAac,
   isAudioOnlyJob,
   shouldCopyAudio,
