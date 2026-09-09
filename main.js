@@ -228,7 +228,7 @@ function normalizeSettings(values) {
 
   config.crf = clampInt(values['vod-crf'], 16, 30, DEFAULTS.crf)
   config.preset = normalizePresetValue(values['vod-preset'])
-  config.audioKbps = clampInt(values['vod-audio-kbps'], 64, 512, DEFAULTS.audioKbps)
+  config.audioKbps = clampInt(values['vod-audio-kbps'], 64, 1024, DEFAULTS.audioKbps)
   config.audioCopyMode = normalizeAudioCopyMode(
     values['vod-audio-copy-mode'],
     parseBoolean(values['vod-copy-audio-if-possible'], DEFAULTS.copyAudioIfPossible)
@@ -412,7 +412,7 @@ function registerQualitySettings(registerSetting) {
     registerSetting,
     'vod-audio-kbps',
     'Audio bitrate',
-    'Target bitrate when audio is re-encoded. Unit: kbps. FFmpeg flag: <code>-b:a</code>. Range: 64 to 512. Use 320 for concert / hi-fi stereo AAC, or 512 if you want the practical AAC-LC ceiling. CD PCM (~1411 kbps) cannot be preserved losslessly in the web player; copy a pre-encoded AAC stream instead.'
+    'Target passed to <code>-b:a</code> when audio is re-encoded. Unit: kbps. Has no effect on copied audio.<br><br>Measured on PeerTube 8.2.4 with music: FFmpeg\'s built-in <code>aac</code> encoder produces about 244 kbps whatever value is set here, and it is the only AAC encoder in the official Docker image. <code>libfdk_aac</code> reaches about 530 kbps, the AAC-LC ceiling for stereo at 44.1 kHz, and returns the same result for any higher value.'
   )
   registerSetting({
     name: 'vod-audio-kbps',
@@ -504,12 +504,12 @@ function registerCompatibilitySettings(registerSetting, audioCopyModeDefault) {
     type: 'select',
     default: audioCopyModeDefault,
     private: true,
-    descriptionHTML: 'Whether the audio you uploaded is kept exactly as it is, or re-encoded. Keeping it avoids a second lossy encode, so a pre-encoded AAC 320 stays 320.<br><br>What each option produced from a 320 kbps AAC upload on PeerTube 8.2.4:<ul><li><strong>Re-encode</strong> — every output re-encoded. Landed at ~244 kbps, because the AAC encoder bundled with PeerTube cannot reach 320 whatever you ask for.</li><li><strong>MP4 files only</strong> — the downloadable files kept 320; the stream people watch dropped to ~244.</li><li><strong>Recommended</strong> — both the downloadable files and the streamed audio kept 320.</li><li><strong>Advanced</strong> — identical to recommended on PeerTube 8.x, which always gives the stream a separate audio track. It only differs where audio and video share one file, and that combination can drift out of sync on long videos.</li></ul>Only stereo AAC-LC can be kept. FLAC, PCM, MP3 and Opus are always re-encoded to AAC at the bitrate set above.',
+    descriptionHTML: 'Each output file either keeps the audio stream from the upload byte for byte, or re-encodes it to AAC.<br><br>Copied audio is unaltered: its bitrate, profile and sample rate are whatever was uploaded, and no setting on this page changes it. There is no upper bitrate limit on copied audio.<br><br>Re-encoded audio is produced by whichever AAC encoder PeerTube finds. Measured on PeerTube 8.2.4 with music: FFmpeg\'s built-in <code>aac</code> encoder reaches about 244 kbps regardless of the bitrate requested; <code>libfdk_aac</code>, where present, reaches the AAC-LC ceiling of about 530 kbps and ignores higher values. The official PeerTube Docker image contains only the built-in encoder.<br><br>Audio is copied only when it is stereo AAC-LC. HE-AAC, more than two channels, and non-AAC codecs (FLAC, PCM, MP3, Opus) are always re-encoded.<br><br><strong>What each option does</strong><ul><li><em>Re-encode audio in every output</em> — no output keeps the uploaded stream.</li><li><em>MP4 files; re-encode for HLS</em> — the downloadable Web Video files keep the uploaded stream. The HLS renditions viewers stream are re-encoded.</li><li><em>MP4 files and the HLS audio track</em> — the Web Video files and the separate HLS audio rendition both keep the uploaded stream.</li><li><em>Every output</em> — as above, and also files where audio and video share one track. PeerTube 8.x always gives HLS a separate audio track, so on 8.x this produces the same result as the previous option. Where audio and video do share a track, copied audio can drift out of sync with re-encoded video (PeerTube issue #6438).</li></ul>Measured from one 320 kbps AAC upload on 8.2.4 — MP4 / HLS audio: re-encode 244 / 244, MP4 only 320 / 244, MP4 and HLS 320 / 320, every output 320 / 320.',
     options: [
-      { label: 'Re-encode the audio — the uploaded track is never kept', value: 'off' },
-      { label: 'Keep the uploaded audio in downloadable MP4 files only — re-encode it for streaming', value: 'when-safe' },
-      { label: 'Keep the uploaded audio in both MP4 files and the stream — recommended', value: 'audio-only' },
-      { label: 'Keep the uploaded audio everywhere, even where audio and video share a track — advanced', value: 'prefer-compatible' }
+      { label: 'Re-encode audio in every output', value: 'off' },
+      { label: 'Keep uploaded audio in MP4 files; re-encode it for HLS', value: 'when-safe' },
+      { label: 'Keep uploaded audio in MP4 files and the HLS audio track', value: 'audio-only' },
+      { label: 'Keep uploaded audio in every output', value: 'prefer-compatible' }
     ]
   })
 }

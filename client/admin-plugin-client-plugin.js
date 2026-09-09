@@ -7,7 +7,7 @@ const DEPENDENT_FIELDS = buildDependentFields()
 // test/client-ranges.test.js, which parses both files and compares.
 const NUMERIC_RANGES = {
   'vod-crf': { min: 16, max: 30, fallback: 21 },
-  'vod-audio-kbps': { min: 64, max: 512, fallback: 320 },
+  'vod-audio-kbps': { min: 64, max: 1024, fallback: 320 },
   'vod-bufsize-multiplier': { min: 1, max: 10, fallback: 2, float: true },
   'vod-original-resolution-kbps': { min: 500, max: 50000, fallback: 12000 },
   'vod-libx264-priority': { min: 1, max: 10000, fallback: 100 },

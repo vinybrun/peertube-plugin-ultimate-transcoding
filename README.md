@@ -80,7 +80,7 @@ These settings model the common generated FFmpeg flags directly:
 | --- | --- | --- |
 | Video quality (CRF) | `-crf` | Lower means higher quality and larger files. |
 | Encoder speed / compression preset | `-preset` | `ultrafast` through `veryslow`, including PeerTube’s `veryfast`. |
-| Audio bitrate | `-b:a` | Used when audio is re-encoded. Range is 64 to 512 kbps. |
+| Audio bitrate | `-b:a` | Passed when audio is re-encoded; ignored for copied audio. FFmpeg's built-in `aac` encoder produces ~244 kbps whatever is set; `libfdk_aac` reaches ~530 kbps and saturates there. |
 | Audio sample rate | `-ar` | Keep the source rate, or force 44100 / 48000. |
 | Rate-control buffer multiplier | `-bufsize` | Computed from the active maxrate. A buffer is always emitted, because libx264 ignores `-maxrate` without one; enable this only to move the multiplier off PeerTube's `2`. |
 
@@ -169,7 +169,7 @@ A value at or below those changes nothing, so to actually prefer `aac` over
 
 ## High-quality / concert audio
 
-CD quality is 16-bit 44.1 kHz stereo PCM, about 1411 kbps. The PeerTube web player cannot ship that losslessly: HLS and Web Video need AAC. AAC-LC at 320 kbps stereo is already near-transparent; 512 kbps is the practical AAC-LC ceiling this plugin will emit.
+CD audio is 16-bit 44.1 kHz stereo PCM, about 1411 kbps. PeerTube delivers MP4 and fMP4 HLS, and labels any audio it does not recognise as AAC in the HLS manifest, so a lossless stream is rejected by the player. AAC-LC stereo at 44.1 kHz saturates at about 530 kbps.
 
 PeerTube 8.x has a sharp edge here. When you generate more than one video resolution **and** a separate AAC / audio-only track, PeerTube sets `canCopyAudio=false` so it will not copy video and audio together. If the plugin then returns no audio flags, ffmpeg's native `aac` encoder defaults to **128 kbps**. That is the "I uploaded AAC 320, but the split file is 128" bug.
 
@@ -178,16 +178,15 @@ Recommended pipeline:
 1. Pre-encode the concert audio to stereo AAC-LC at 320 or 512 kbps, 44100 Hz (or 48000 Hz if you prefer video-world rates).
 2. Mux that audio into the uploaded file. Variable-bitrate AAC is fine; the plugin still treats it as copy-safe.
 3. In PeerTube, enable HLS split audio so 720p and 1080p share one audio track.
-4. In this plugin, set **Audio copy / passthrough** to **"Keep the uploaded audio in both MP4 files and the stream"**.
+4. In this plugin, set **Audio copy / passthrough** to **"Keep uploaded audio in MP4 files and the HLS audio track"**.
 5. Also enable **Audio bitrate** at 320 or 512 as the fallback for PCM / FLAC / MP3 sources that cannot be copied.
 
-That option is the recommended one because the split HLS audio track is its own
-file, so copying it cannot desync anything. The last option in the list goes
-further and also keeps the audio inside renditions whose video is being re-encoded
-— the pairing PeerTube disabled over
-[#6438](https://github.com/Chocobozzz/PeerTube/issues/6438). Use it if you want the
-Web Video MP4s to carry the high-bitrate audio too, and check a long file for drift
-before trusting it on a full concert.
+The HLS audio track is a separate file, so copying it cannot desync anything. The
+last option in the list additionally keeps audio in files where audio and video
+share one track — the pairing PeerTube disabled over
+[#6438](https://github.com/Chocobozzz/PeerTube/issues/6438). PeerTube 8.x always
+gives HLS a separate audio track, so on 8.x the two options produce the same
+result.
 
 If the source is still PCM or FLAC, the plugin cannot copy it into a web-safe player. It will re-encode to stereo AAC-LC at the configured bitrate instead of silently falling back to 128 kbps.
 
@@ -217,8 +216,8 @@ ffmpeg -i master.wav \
 ```
 
 Asking for 576k deliberately overshoots; the encoder gives you the ~530 kbps
-ceiling. Then set **Audio copy / passthrough** to *"Keep the uploaded audio in
-both MP4 files and the stream"*.
+ceiling. Then set **Audio copy / passthrough** to *"Keep uploaded audio in MP4 files
+and the HLS audio track"*.
 
 Measured end to end on PeerTube 8.2.4: 529611 bps in, 529611 in every Web Video
 file, 529200 on the HLS audio track, playing in the browser.
@@ -228,12 +227,6 @@ encoder saturates near 244 kbps on real music no matter what `-b:a` says, and it
 is the only AAC encoder in the official PeerTube Docker image. Use `libfdk_aac`,
 or Apple's encoder via `qaac` / `afconvert`, and check the result with ffprobe
 before uploading.
-
-**Is it worth it?** AAC-LC at 320 kbps is already transparent for music and is
-the bitrate every device has seen a thousand times. 512–530 is headroom rather
-than audible gain, and it is well beyond what most hardware decoders are usually
-asked to do. It plays in the browser — that is tested — but 320 is the safer
-default if the video needs to work everywhere.
 
 ### Judge the command, not only the measured bitrate
 
@@ -274,18 +267,18 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
   works. Each option now states which outputs keep the uploaded audio, measured
   rather than described:
 
-  | Option | Downloadable MP4 | Streamed audio |
+  | Option | Web Video MP4 | HLS audio |
   | --- | --- | --- |
-  | Re-encode | re-encoded | re-encoded |
-  | MP4 files only | **kept** | re-encoded |
-  | Recommended | **kept** | **kept** |
-  | Advanced | **kept** | **kept** |
+  | Re-encode audio in every output | 244 | 244 |
+  | Keep in MP4 files; re-encode for HLS | **320** | 244 |
+  | Keep in MP4 files and the HLS audio track | **320** | **320** |
+  | Keep in every output | **320** | **320** |
 
-  From a 320 kbps AAC upload, "kept" means 320 arrived intact and "re-encoded"
-  landed at ~244, since the AAC encoder shipped with PeerTube cannot reach 320
-  whatever bitrate is requested. The advanced option behaves identically to the
-  recommended one on PeerTube 8.x, which always gives HLS a separate audio
-  track. Stored values are unchanged, so existing configurations keep working.
+  Measured from one 320 kbps AAC upload on PeerTube 8.2.4. Stored values are
+  unchanged, so existing configurations keep working.
+- Remove the 512 kbps limit on the audio bitrate field; the range is now
+  64–1024. The encoder decides what it can deliver, and the field says what each
+  encoder was measured to produce.
 
 ### 0.7.2
 
