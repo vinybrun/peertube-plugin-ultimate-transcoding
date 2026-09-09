@@ -3,6 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const {
+  isHeAacProfile,
   normalizeAudioCopyMode,
   inspectAudioStream,
   isSafeToCopyAac,
@@ -153,4 +154,24 @@ test('uses PeerTube-like fallback bitrate when the admin did not set one', () =>
   })
 
   assert.ok(options.includes(`-b:a ${PEERTUBE_MAX_AUDIO_KBPS}k`))
+})
+
+// A real HE-AAC fixture cannot be produced here — this libfdk build has no SBR
+// encoder ("Unable to set the AOT 5: Invalid config") — so pin the guard against
+// every profile string ffprobe reports for an AAC stream instead.
+test('copy-safety is decided correctly for every AAC profile ffprobe reports', () => {
+  const copyable = [ 'LC', 'Main', 'SSR', 'LTP', 'ELD', 'MPEG-2 AAC Low', 'MPEG-4 AAC Low' ]
+  const refused = [ 'HE-AAC', 'HE-AACv2', 'HE-AAC v2', 'he-aac' ]
+
+  for (const profile of copyable) {
+    assert.equal(isHeAacProfile(profile), false, `${profile} must not be treated as HE-AAC`)
+    assert.equal(isSafeToCopyAac({ codec: 'aac', profile, channelLayout: 'stereo', channels: 2 }), true,
+      `${profile} stereo should be copy-safe`)
+  }
+
+  for (const profile of refused) {
+    assert.equal(isHeAacProfile(profile), true, `${profile} must be treated as HE-AAC`)
+    assert.equal(isSafeToCopyAac({ codec: 'aac', profile, channelLayout: 'stereo', channels: 2 }), false,
+      `${profile} must never be copied`)
+  }
 })

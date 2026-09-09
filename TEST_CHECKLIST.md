@@ -36,7 +36,7 @@ any change to the builders.
 - [x] **Preset `veryfast` / `faster` / `ultrafast` are rejected.** Confirmed; `PRESETS` is the full x264 list as of 0.7.1.
 - [x] **Encoder priorities do not reload on Save.** Confirmed; `installProfiles()` now re-runs on settings change. Note `removeAllProfilesAndEncoderPriorities()` + re-add is synchronous in one tick, so an in-flight job cannot observe the gap.
 - [x] **Container bitrate mistaken for audio bitrate.** Fixed in 0.7.1: `format.bit_rate` is only used when the probe has no video stream.
-- [x] **HE-AAC is treated as copy-safe.** Fixed in 0.7.1 via `isHeAacProfile()`. Still **untested against a real HE-AAC fixture** — the available libfdk build refuses to encode AOT 5.
+- [x] **HE-AAC is treated as copy-safe.** Fixed in 0.7.1 via `isHeAacProfile()`. A real fixture is still impossible here: this libfdk build has no SBR encoder (`Unable to set the AOT 5: Invalid config`), so the guard is pinned by unit tests over every profile string ffprobe reports for AAC instead — `LC`, `Main`, `SSR`, `LTP`, `ELD`, `MPEG-2/4 AAC Low` stay copyable, `HE-AAC` / `HE-AACv2` are refused.
 - [x] **`package.json` `bugs` must be a URL string.** Confirmed: an object fails install with `PackageJSON is invalid (invalid fields: "bugs")`.
 
 ## 0b. Confirmed PeerTube behaviour, not plugin bugs
@@ -60,7 +60,7 @@ any change to the builders.
 - [ ] Profile set to `ultimate-transcoding`: builders log `using ultimate-transcoding profile`.
 - [ ] VOD profile plugin / live profile default (and the reverse): only the selected side uses the plugin.
 - [ ] Uninstall: profile disappears, in-flight jobs do not crash the instance, new jobs use `default`.
-- [x] Upgrade 0.6.2 → 0.7.2: old “Copy audio when possible” becomes `when-safe`, not `prefer-compatible`. Verified by seeding the 0.6.x settings row and restarting: the registered default resolves to `when-safe` and other saved settings survive. The migration must **not** use `settingsManager.setSetting()` — it writes `settings.<name>` through Sequelize and rewrites the whole JSON column, dropping every other setting.
+- [x] Upgrade 0.6.2 → 0.7.2: old “Copy audio when possible” becomes `when-safe`, not `prefer-compatible`. Verified for real — the published 0.6.2 tarball was installed, configured through the API the way an admin would (copy-audio on, CRF 19, a 1080p cap), then upgraded in place: the copy mode resolved to `when-safe`, the removed copy-video setting disappeared, and every other 0.6.2 setting survived. Also verified by seeding the settings row directly: the registered default resolves to `when-safe` and other saved settings survive. The migration must **not** use `settingsManager.setSetting()` — it writes `settings.<name>` through Sequelize and rewrites the whole JSON column, dropping every other setting.
 - [ ] Fresh install: audio copy mode defaults to `off`.
 - [ ] Settings change applies to the **next** job, not the running one.
 - [ ] PeerTube restart keeps saved settings.
@@ -276,16 +276,17 @@ and video rungs start at index 1.
 
 After a passing **E** transcode:
 
-- [ ] PeerTube web player, HLS adaptive: 1080↔720 switch, audio continuous, no mute blip.
-- [ ] Audio-only quality appears when split/0p is on.
-- [ ] Download Web Video 1080 / 720 / 0p; probe each.
-- [ ] Download / fetch HLS 0p fragment; probe.
-- [ ] Chrome, Firefox, Safari, iOS Safari, Android Chrome.
+- [x] PeerTube web player, HLS: plays, position advances, `webkitVideoDecodedByteCount` and `webkitAudioDecodedByteCount` both climb, no media error. Verified in Chromium via `docker/playback_check.py`, which records the session to `testdata/results/playback/`.
+- [x] 1080↔720 switch through the player's own quality menu: keeps playing, audio keeps decoding across the switch.
+- [x] Audio-only quality appears when split/0p is on — menu offers `1080p / 720p / Audio only / Auto`.
+- [x] Probe every HLS rendition actually served to the player: audio-only is `aac / LC / stereo / 320000`, video rungs are video-only.
+- [x] Seek forward mid-playback; playback resumes at the new position.
+- [ ] Chrome (real, not headless), Firefox, Safari, iOS Safari, Android Chrome.
 - [ ] Embed player.
 - [ ] P2P / WebRTC (if enabled) does not break audio.
 - [ ] Remote PeerTube < 6.3 playing a split-audio video (upstream warning).
 - [ ] Subtitles + split audio still in sync.
-- [ ] Seek, pause, speed 1.5×.
+- [ ] Pause, speed 1.5×.
 
 ---
 
@@ -338,12 +339,15 @@ Profile `ultimate-transcoding`, HLS split ON, 1080+720+0p, copy `prefer-compatib
 
 Since updated for 0.7.2: live verified over real RTMP (both copy and re-encode
 audio paths, three rungs), partial-rendition-cap and CRF-override paths verified
-against the logged ffmpeg commands, and the 0.6.x settings migration verified by
-seeding the old row.
+against the logged ffmpeg commands, the 0.6.2 → 0.7.2 upgrade verified by
+installing the real published tarball and upgrading over it, the admin UI driven
+end to end in a browser, and playback verified in the PeerTube player with a
+recording kept for review.
 
-Still not run: HE-AAC fixture, studio edition, URL import, dual audio, HDR, 4K,
-VFR, WHIP, real playback on Chrome / Safari / phones, and libfdk_aac (absent from
-the stock Docker image).
+Still not run: a real HE-AAC fixture (impossible on this libfdk build), studio
+edition, URL import, dual audio, HDR, 4K, VFR, WHIP, playback on Firefox /
+Safari / iOS / Android, embed player, P2P, and libfdk_aac (absent from the stock
+Docker image).
 
 ---
 
