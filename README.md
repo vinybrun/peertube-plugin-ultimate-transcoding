@@ -184,6 +184,27 @@ ffprobe -hide_banner -select_streams a:0 \
   -of default=noprint_wrappers=1 file.mp4
 ```
 
+### Judge the command, not only the measured bitrate
+
+FFmpeg's native `aac` encoder undershoots its target on simple material. A job
+built with `-b:a 320k` routinely measures around 240 kbps when the source is a
+sine tone, pink noise, near-silence, or anything else with little for the
+encoder to spend bits on. That is the encoder, not a dropped setting: real music
+fills the budget much more closely.
+
+So when a test result looks low, confirm what was actually requested before
+concluding the plugin ignored you. PeerTube logs the full command at `debug` log
+level:
+
+```bash
+# server logs, or `docker logs <container>` for a container install
+grep -o '"shellCommand": "[^"]*"' /var/www/peertube/storage/logs/peertube.log | tail -5
+```
+
+A copied stream is the exception: copying never changes the bitrate, so a copied
+track measures whatever the source was. Copying a 128 kbps AAC source gives you
+128 kbps — the fallback bitrate only applies when the audio is re-encoded.
+
 ## Behavior Notes
 
 - Setting changes affect future transcodes, not jobs that are already running.
