@@ -6,7 +6,7 @@ The goal is simple: make PeerTube transcoding easier to tune from the admin UI i
 
 ## What It Controls
 
-- VOD bitrate ladder for `144p`, `240p`, `360p`, `480p`, `720p`, `1080p`, `1440p`, and `2160p`
+- Per-resolution bitrate caps for `144p`, `240p`, `360p`, `480p`, `720p`, `1080p`, `1440p`, and `2160p`
 - Generated FFmpeg options such as `-crf`, `-preset`, `-profile:v`, `-pix_fmt`, `-maxrate`, `-bufsize`, `-b:a`, `-ar`, and `-profile:a`
 - Audio copy / passthrough, including the PeerTube 8.x split-AAC case where `canCopyAudio` is forced off
 - PeerTube transcoding profile `scaleFilter.name`
@@ -26,7 +26,14 @@ PeerTube's transcoding plugin API is intentionally small and powerful. According
 
 PeerTube also lets plugins influence encoder priority with `addVODEncoderPriority(...)`.
 
-This plugin turns those documented controls into a usable admin interface. The bitrate caps are VOD-specific; the FFmpeg overrides and encoder priorities are also registered for live profiles.
+This plugin turns those documented controls into a usable admin interface.
+
+Every setting applies to **both VOD and live**, because the same builders are
+registered for both. The setting names are prefixed `vod-` for historical
+reasons only — a `720p` cap of 2000 kbps comes out as `-maxrate:v:1 2000000` on
+a live rung just as it does on a VOD rendition. Leave PeerTube's *live*
+transcoding profile set to `default` if you want the plugin to affect uploads
+alone.
 
 ## Requirements
 
