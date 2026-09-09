@@ -10,7 +10,6 @@ const {
 const {
   PRESETS,
   normalizePreset,
-  shouldCopyVideo,
   buildVideoReencodeOptions
 } = require('./video-policy')
 
@@ -26,7 +25,6 @@ const DEFAULTS = {
   videoProfile: 'high',
   pixelFormat: 'yuv420p',
   scaleFilterName: '',
-  copyVideoIfPossible: false,
   copyAudioIfPossible: false,
   originalResolutionKbps: 12000,
   videoInputOptions: [],
@@ -113,7 +111,6 @@ function buildDefaultConfig () {
     videoProfile: DEFAULTS.videoProfile,
     pixelFormat: DEFAULTS.pixelFormat,
     scaleFilterName: DEFAULTS.scaleFilterName,
-    copyVideoIfPossible: DEFAULTS.copyVideoIfPossible,
     copyAudioIfPossible: DEFAULTS.copyAudioIfPossible,
     originalResolutionKbps: DEFAULTS.originalResolutionKbps,
     videoInputOptions: [ ...DEFAULTS.videoInputOptions ],
@@ -243,7 +240,6 @@ function normalizeSettings(values) {
   config.videoProfile = normalizeVideoProfile(values['vod-video-profile'])
   config.pixelFormat = normalizePixelFormat(values['vod-pixel-format'])
   config.scaleFilterName = normalizeOptionalString(values['vod-scale-filter-name'], DEFAULTS.scaleFilterName)
-  config.copyVideoIfPossible = parseBoolean(values['vod-copy-video-if-possible'], DEFAULTS.copyVideoIfPossible)
   config.copyAudioIfPossible = config.audioCopyMode !== 'off'
   config.originalResolutionKbps = clampInt(values['vod-original-resolution-kbps'], 500, 50000, DEFAULTS.originalResolutionKbps)
   config.videoInputOptions = parseOptionLines(values['vod-video-input-options'])
@@ -261,6 +257,25 @@ function normalizeSettings(values) {
   }))
 
   return config
+}
+
+// PeerTube's getSetting() falls back to the *registered* default whenever a
+// setting was never stored, so an install upgrading from 0.6.x reads
+// 'vod-audio-copy-mode' back as 'off' and normalizeAudioCopyMode() never sees an
+// unset value. Register the new select with a default derived from the old
+// checkbox instead.
+//
+// Deliberately not settingsManager.setSetting(): it writes `settings.<name>`
+// through Sequelize, which rewrites the whole JSON column and drops every other
+// setting the admin had saved. Verified on 8.2.4.
+async function getLegacyAudioCopyDefault (settingsManager) {
+  try {
+    const legacy = await settingsManager.getSetting('vod-copy-audio-if-possible')
+    return parseBoolean(legacy, false) ? 'when-safe' : DEFAULTS.audioCopyMode
+  } catch (err) {
+    console.error('ultimate-transcoding: could not read the legacy copy-audio setting', err)
+    return DEFAULTS.audioCopyMode
+  }
 }
 
 async function loadSettings(settingsManager) {
@@ -287,7 +302,6 @@ async function loadSettings(settingsManager) {
     'vod-video-profile',
     'vod-pixel-format',
     'vod-scale-filter-name',
-    'vod-copy-video-if-possible',
     'vod-copy-audio-if-possible',
     'vod-audio-copy-mode',
     'vod-audio-sample-rate',
@@ -425,7 +439,7 @@ function registerQualitySettings(registerSetting) {
     registerSetting,
     'vod-bufsize-multiplier',
     'Buffer size multiplier',
-    'Sets the VBV buffer size relative to the active max bitrate. Formula: <code>bufsize = max bitrate x multiplier</code>. FFmpeg flag: <code>-bufsize</code>.'
+    'Sets the VBV buffer size relative to the active max bitrate. Formula: <code>bufsize = max bitrate x multiplier</code>. A buffer is always emitted alongside <code>-maxrate</code> because libx264 ignores a ceiling that has no buffer; enable this only to change the multiplier away from PeerTube\'s <code>2</code>. FFmpeg flag: <code>-bufsize</code>.'
   )
   registerSetting({
     name: 'vod-bufsize-multiplier',
@@ -435,7 +449,7 @@ function registerQualitySettings(registerSetting) {
   })
 }
 
-function registerCompatibilitySettings(registerSetting) {
+function registerCompatibilitySettings(registerSetting, audioCopyModeDefault) {
   registerSection(
     registerSetting,
     'Compatibility & Stream Handling',
@@ -484,18 +498,11 @@ function registerCompatibilitySettings(registerSetting) {
     private: true
   })
 
-  registerCheckbox(
-    registerSetting,
-    'vod-copy-video-if-possible',
-    'Copy video when possible',
-    'Allow stream copy only when PeerTube will not scale the frame. On PeerTube 8.x every video rung adds <code>scale=w=-2:h=N</code>, and ffmpeg refuses to combine that with <code>-c:v copy</code>. This checkbox therefore does not copy 720p/1080p VOD or live variants; leaving it on will no longer fail the job.'
-  )
-
   registerSetting({
     name: 'vod-audio-copy-mode',
     label: 'Audio copy / passthrough',
     type: 'select',
-    default: DEFAULTS.audioCopyMode,
+    default: audioCopyModeDefault,
     private: true,
     descriptionHTML: 'PeerTube often sets <code>canCopyAudio=false</code> when it builds more than one resolution or a separate AAC track. In that case a simple "copy when possible" checkbox never fires, and ffmpeg falls back to 128 kbps. <strong>Prefer compatible AAC</strong> copies a stereo AAC-LC source even then, which is the right concert / CD pipeline if you pre-encode audio to AAC 320 or 512.',
     options: [
@@ -545,7 +552,7 @@ function registerExpertSettings(registerSetting) {
   registerSection(
     registerSetting,
     'Expert Options',
-    'Use these settings when the dedicated controls above are not enough. Add one complete FFmpeg option per line in the extra input/output fields. Lines starting with <code>#</code> are ignored. Higher encoder priority numbers are preferred first; restart PeerTube after changing priority values.',
+    'Use these settings when the dedicated controls above are not enough. Add one complete FFmpeg option per line in the extra input/output fields. Lines starting with <code>#</code> are ignored. Higher encoder priority numbers are preferred first, and are re-applied as soon as you save.',
     'expert'
   )
 
@@ -670,15 +677,12 @@ function buildVideoConfig () {
   return config
 }
 
-const videoBuilder = async ({ resolution, canCopyVideo, fps, inputBitrate, inputRatio, streamNum }) => {
-  if (shouldCopyVideo({
-    copyVideoIfPossible: runtimeConfig.copyVideoIfPossible,
-    canCopyVideo,
-    resolution
-  })) {
-    return { copy: true }
-  }
-
+// PeerTube never lets a video job copy: every rung it asks us to build carries a
+// resolution, and buildVODCommand / getLiveTranscodingCommand always add a scale
+// filter for it. ffmpeg then refuses the job with "Filtergraph was specified, but
+// codec copy was selected". The 0p audio rung is the only unscaled job and it is
+// routed to the audio builder, so there is nothing here to copy.
+const videoBuilder = async ({ resolution, fps, inputBitrate, inputRatio, streamNum }) => {
   const options = {}
   const outputOptions = buildVideoReencodeOptions({
     config: buildVideoConfig(),
@@ -760,9 +764,11 @@ function installProfiles (transcodingManager) {
 }
 
 async function register ({ transcodingManager, registerSetting, settingsManager }) {
+  const audioCopyModeDefault = await getLegacyAudioCopyDefault(settingsManager)
+
   registerOverviewSection(registerSetting)
   registerQualitySettings(registerSetting)
-  registerCompatibilitySettings(registerSetting)
+  registerCompatibilitySettings(registerSetting, audioCopyModeDefault)
   registerResolutionSettings(registerSetting)
   registerExpertSettings(registerSetting)
 

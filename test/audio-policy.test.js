@@ -128,7 +128,10 @@ test('re-encode options force stereo AAC-LC and an explicit bitrate', () => {
   ])
 })
 
-test('suffixes live audio flags', () => {
+// Only flags that already name a stream type may carry the live stream number.
+// `-ar:0` means "output stream index 0", which with split audio is whichever
+// stream -map put first, so PeerTube leaves those flags global.
+test('live suffixes only stream-typed audio flags', () => {
   const options = buildAudioReencodeOptions({
     audioKbps: 320,
     sampleRate: '44100',
@@ -136,9 +139,9 @@ test('suffixes live audio flags', () => {
   })
 
   assert.deepEqual(options, [
-    '-channel_layout:0 stereo',
+    '-channel_layout stereo',
     '-b:a:0 320k',
-    '-ar:0 44100',
+    '-ar 44100',
     '-profile:a:0 aac_low'
   ])
 })

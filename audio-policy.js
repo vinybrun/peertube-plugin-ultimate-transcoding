@@ -1,5 +1,7 @@
 'use strict'
 
+const { buildStreamSuffix } = require('./stream-flags')
+
 const AUDIO_COPY_MODES = [ 'off', 'when-safe', 'audio-only', 'prefer-compatible' ]
 
 const PEERTUBE_FALLBACK_AUDIO_KBPS = 256
@@ -84,12 +86,6 @@ function getFallbackAudioKbps (audioInfo) {
   if (sourceKbps <= 0) return PEERTUBE_FALLBACK_AUDIO_KBPS
 
   return Math.min(PEERTUBE_MAX_AUDIO_KBPS, sourceKbps)
-}
-
-function buildStreamSuffix (flag, streamNum) {
-  return streamNum === undefined || streamNum === null || streamNum === ''
-    ? flag
-    : `${flag}:${streamNum}`
 }
 
 function buildAudioReencodeOptions (options) {

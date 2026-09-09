@@ -9,7 +9,6 @@ The goal is simple: make PeerTube transcoding easier to tune from the admin UI i
 - VOD bitrate ladder for `144p`, `240p`, `360p`, `480p`, `720p`, `1080p`, `1440p`, and `2160p`
 - Generated FFmpeg options such as `-crf`, `-preset`, `-profile:v`, `-pix_fmt`, `-maxrate`, `-bufsize`, `-b:a`, `-ar`, and `-profile:a`
 - Audio copy / passthrough, including the PeerTube 8.x split-AAC case where `canCopyAudio` is forced off
-- PeerTube transcoding profile `copy` mode when PeerTube says a stream can be copied safely
 - PeerTube transcoding profile `scaleFilter.name`
 - PeerTube transcoding profile `inputOptions`
 - PeerTube transcoding profile `outputOptions`
@@ -35,11 +34,9 @@ This plugin turns those documented controls into a usable admin interface. The b
 
 ## Installation
 
-After publishing to npm:
-
-```bash
-npm install peertube-plugin-ultimate-transcoding
-```
+The npm registry still serves `0.6.2`, which predates everything below. Until a
+newer version is published there, install from a release tarball or from disk —
+`npm install peertube-plugin-ultimate-transcoding` will give you the old plugin.
 
 If you are testing locally from disk, install it with your normal local PeerTube plugin workflow.
 
@@ -71,7 +68,7 @@ These settings model the common generated FFmpeg flags directly:
 | Encoder speed / compression preset | `-preset` | `ultrafast` through `veryslow`, including PeerTube’s `veryfast`. |
 | Audio bitrate | `-b:a` | Used when audio is re-encoded. Range is 64 to 512 kbps. |
 | Audio sample rate | `-ar` | Keep the source rate, or force 44100 / 48000. |
-| Rate-control buffer multiplier | `-bufsize` | Computed from each rendition maxrate. |
+| Rate-control buffer multiplier | `-bufsize` | Computed from the active maxrate. A buffer is always emitted, because libx264 ignores `-maxrate` without one; enable this only to move the multiplier off PeerTube's `2`. |
 
 ### Compatibility & Stream Handling
 
@@ -80,7 +77,6 @@ This section keeps the web-playback and pipeline controls together:
 - H.264 profile
 - Pixel format
 - Scale filter override
-- Video copy when possible
 - Audio copy / passthrough mode (never, only when PeerTube allows it, audio-only / split jobs, or prefer compatible AAC)
 
 ### Max Bitrate Per Resolution
@@ -150,7 +146,11 @@ The plugin also uses PeerTube's documented `addVODEncoderPriority(...)` API for:
 - `aac`
 - `libfdk_aac`
 
-Higher numbers mean higher priority. Restart PeerTube after changing encoder priority values so the new order is applied.
+Higher numbers mean higher priority, and saving re-applies them without a restart.
+
+PeerTube's own built-in priorities are `libfdk_aac: 200`, `aac: 100`, `libx264: 100`.
+A value at or below those changes nothing, so to actually prefer `aac` over
+`libfdk_aac` you have to set it above `200`.
 
 ## High-quality / concert audio
 
@@ -162,9 +162,17 @@ Recommended pipeline:
 
 1. Pre-encode the concert audio to stereo AAC-LC at 320 or 512 kbps, 44100 Hz (or 48000 Hz if you prefer video-world rates).
 2. Mux that audio into the uploaded file. Variable-bitrate AAC is fine; the plugin still treats it as copy-safe.
-3. In this plugin, set **Audio copy / passthrough** to **Prefer compatible AAC**.
-4. Also enable **Audio bitrate** at 320 or 512 as the fallback for PCM / FLAC / MP3 sources that cannot be copied.
-5. In PeerTube, enable HLS split audio if you want one shared audio track across 720p and 1080p.
+3. In PeerTube, enable HLS split audio so 720p and 1080p share one audio track.
+4. In this plugin, set **Audio copy / passthrough** to **Copy compatible AAC on audio-only / split jobs**.
+5. Also enable **Audio bitrate** at 320 or 512 as the fallback for PCM / FLAC / MP3 sources that cannot be copied.
+
+`audio-only` is the recommended mode because the split HLS audio track is its own
+file: copying it cannot desync anything. **Prefer compatible AAC** goes further and
+also copies the source audio into muxed renditions whose video is being re-encoded
+— that is the pairing PeerTube disabled over
+[#6438](https://github.com/Chocobozzz/PeerTube/issues/6438). Use it if you want the
+Web Video MP4s to keep the high-bitrate audio too, and check a long file for drift
+before trusting it on a full concert.
 
 If the source is still PCM or FLAC, the plugin cannot copy it into a web-safe player. It will re-encode to stereo AAC-LC at the configured bitrate instead of silently falling back to 128 kbps.
 
@@ -180,12 +188,38 @@ ffprobe -hide_banner -select_streams a:0 \
 
 - Setting changes affect future transcodes, not jobs that are already running.
 - Disabling a rendition does not delete files that already exist.
-- The plugin does not upscale above the source resolution.
 - Audio-only playback availability still depends on PeerTube HLS audio/video separation support.
 - When a stream is copied with `copy: true`, re-encode-specific options for that copied stream do not apply.
 - Existing installs that only had "Copy audio when possible" checked are migrated to **Copy only when PeerTube allows it**. Switch them to **Prefer compatible AAC** if you want split-audio jobs to keep a 320+ kbps source.
 
 ## Changelog
+
+### 0.7.2
+
+- Stop suffixing bare FFmpeg flags with the live stream number. `-crf:1` selects
+  *output stream index 1*, not video rung 1, and live streams are ordered by
+  `-map`: with split audio, index 0 is the audio track. `-crf`, `-preset`, `-bf`,
+  `-b_strategy`, `-pix_fmt`, `-channel_layout` and `-ar` are now global, as they
+  are in PeerTube's own builders; only `-b:a`, `-maxrate:v`, `-bufsize:v`,
+  `-profile:v`, `-profile:a`, `-r:v` and `-b:v` carry the stream number.
+- Always emit PeerTube's stock ladder and layer overrides on top of it. Enabling
+  one rendition cap used to hand PeerTube an empty builder for every *other*
+  rung, which is the same lost-defaults bug 0.7.1 set out to fix.
+- Always pair `-maxrate` with `-bufsize`. libx264 drops a ceiling that has no
+  buffer (`VBV maxrate specified, but no bufsize, ignored`), so the rendition
+  caps did nothing unless the buffer multiplier toggle happened to be on too.
+- Always emit `-r` / `-preset`. Nothing else in PeerTube sets output fps, so an
+  override used to leave the rendition at the source frame rate while PeerTube
+  still derived `-g:v` from the fps it expected.
+- Pin `-b:v` on live, as PeerTube's own live builder does.
+- Actually migrate the 0.6.x "Copy audio when possible" checkbox. PeerTube
+  returns a setting's *registered default* when nothing is stored, so the copy
+  mode always read back as `off` and the migration never ran.
+- Remove the "Copy video when possible" checkbox. Every video job PeerTube hands
+  a plugin carries a resolution, and every one of those gets a scale filter, so
+  the setting could never take effect.
+- Recommend `audio-only` rather than `prefer-compatible` for the split-audio
+  pipeline, and document the desync trade-off.
 
 ### 0.7.1
 

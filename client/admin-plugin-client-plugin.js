@@ -1,15 +1,15 @@
 const RESOLUTIONS = [ 144, 240, 360, 480, 720, 1080, 1440, 2160 ]
 
 const DEPENDENT_FIELDS = buildDependentFields()
-const STANDALONE_CHECKBOXES = [
-  'vod-copy-video-if-possible',
+// Settings that stand alone instead of being gated by an enable- checkbox.
+const STANDALONE_SETTINGS = [
   'vod-audio-copy-mode',
   'vod-audio-sample-rate'
 ]
 const OWN_SETTING_NAMES = Array.from(new Set(
   Object.keys(DEPENDENT_FIELDS)
     .concat(Object.values(DEPENDENT_FIELDS))
-    .concat(STANDALONE_CHECKBOXES)
+    .concat(STANDALONE_SETTINGS)
 ))
 
 let observer = null
@@ -161,7 +161,7 @@ function markSettingContainers () {
     }
   }
 
-  for (const name of STANDALONE_CHECKBOXES) {
+  for (const name of STANDALONE_SETTINGS) {
     const container = findFirstContainer(name)
     if (!container) continue
 

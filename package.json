@@ -1,6 +1,6 @@
 {
   "name": "peertube-plugin-ultimate-transcoding",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Ultimate PeerTube transcoding controls with a cleaner settings UI, FFmpeg overrides, and high-quality audio passthrough",
   "homepage": "https://github.com/vinybrun/peertube-plugin-ultimate-transcoding",
   "repository": {

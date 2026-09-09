@@ -1,5 +1,7 @@
 'use strict'
 
+const { buildStreamSuffix, isLiveStream } = require('./stream-flags')
+
 const PRESETS = [
   'ultrafast',
   'superfast',
@@ -26,14 +28,12 @@ const AVERAGE_BIT_PER_PIXEL = {
 const MIN_BIT_PER_PIXEL = 0.02
 const LADDER = [ 2160, 1440, 1080, 720, 480, 360, 240, 144 ]
 
+// PeerTube's own stock x264 values, from ffmpeg-default-transcoding-profile.ts
+const PEERTUBE_PRESET = 'veryfast'
+const PEERTUBE_BUFSIZE_MULTIPLIER = 2
+
 function normalizePreset (value, fallback) {
   return PRESETS.includes(value) ? value : fallback
-}
-
-function buildStreamSuffix (flag, streamNum) {
-  return streamNum === undefined || streamNum === null || streamNum === ''
-    ? flag
-    : `${flag}:${streamNum}`
 }
 
 function nearestLadder (resolution) {
@@ -77,66 +77,25 @@ function peertubeTargetBitrate (options) {
   return Math.max(min, Math.round(capped))
 }
 
-function shouldCopyVideo (options) {
-  const {
-    copyVideoIfPossible = false,
-    canCopyVideo = false,
-    resolution = 0
-  } = options
+// The rendition cap the admin enabled for this rung, in bit/s, or PeerTube's
+// own computed target when no cap applies.
+function getTargetBitrate (options) {
+  const { maxrateKbps, resolution, fps, inputBitrate, inputRatio } = options
 
-  if (!copyVideoIfPossible || !canCopyVideo) return false
+  if (maxrateKbps !== null && maxrateKbps !== undefined) return maxrateKbps * 1000
 
-  // PeerTube 8.x always adds scale=w=-2:h=RESOLUTION for any video job.
-  // ffmpeg then dies: "Filtergraph was specified, but codec copy was selected."
-  if (resolution) return false
-
-  return true
+  return peertubeTargetBitrate({ inputBitrate, inputRatio, fps, resolution })
 }
 
-function hasVideoEncodeOverride (config) {
-  if (!config || !config.toggles) return false
-
-  if (
-    config.toggles.crf ||
-    config.toggles.preset ||
-    config.toggles.videoProfile ||
-    config.toggles.pixelFormat ||
-    config.toggles.bufsizeMultiplier ||
-    config.toggles.originalResolutionKbps ||
-    config.toggles.videoOutputOptions ||
-    config.toggles.scaleFilterName
-  ) {
-    return true
-  }
-
-  return Array.isArray(config.resolutions) && config.resolutions.some(entry => entry.enabled)
-}
-
-function buildPeertubeDefaultVideoOptions (options) {
-  const {
-    resolution,
-    fps,
-    inputBitrate,
-    inputRatio,
-    streamNum
-  } = options
-
-  const target = peertubeTargetBitrate({ inputBitrate, inputRatio, fps, resolution })
-  const outputOptions = [
-    `${buildStreamSuffix('-preset', streamNum)} veryfast`,
-    `${buildStreamSuffix('-maxrate:v', streamNum)} ${target}`,
-    `${buildStreamSuffix('-bufsize:v', streamNum)} ${target * 2}`,
-    '-b_strategy 1',
-    `${buildStreamSuffix('-bf', streamNum)} 16`
-  ]
-
-  if (fps) {
-    outputOptions.push(`${buildStreamSuffix('-r:v', streamNum)} ${fps}`)
-  }
-
-  return outputOptions
-}
-
+// Selecting a plugin profile replaces PeerTube's `default` builder outright: it
+// does not merge. Anything we leave out is simply gone, so we always emit the
+// stock ladder and let the admin's overrides replace individual flags.
+//
+// That matters most for `-preset` and `-r`, which nothing else in PeerTube
+// sets: without `-r` the rendition keeps the source frame rate and ignores the
+// instance's fps ladder, while PeerTube still derives `-g:v` from the fps it
+// expected. `-maxrate` without `-bufsize` is likewise dropped by libx264
+// ("VBV maxrate specified, but no bufsize, ignored"), so the two ship together.
 function buildVideoReencodeOptions (options) {
   const {
     config,
@@ -148,37 +107,44 @@ function buildVideoReencodeOptions (options) {
     maxrateKbps
   } = options
 
-  if (!hasVideoEncodeOverride(config)) {
-    return buildPeertubeDefaultVideoOptions({ resolution, fps, inputBitrate, inputRatio, streamNum })
+  const toggles = (config && config.toggles) || {}
+  const target = getTargetBitrate({ maxrateKbps, resolution, fps, inputBitrate, inputRatio })
+
+  const bufsizeMultiplier = toggles.bufsizeMultiplier
+    ? config.bufsizeMultiplier
+    : PEERTUBE_BUFSIZE_MULTIPLIER
+
+  const outputOptions = [
+    `-preset ${toggles.preset ? config.preset : PEERTUBE_PRESET}`,
+    `${buildStreamSuffix('-maxrate:v', streamNum)} ${target}`,
+    `${buildStreamSuffix('-bufsize:v', streamNum)} ${Math.round(target * bufsizeMultiplier)}`,
+    '-b_strategy 1',
+    '-bf 16'
+  ]
+
+  if (toggles.crf) {
+    outputOptions.push(`-crf ${config.crf}`)
   }
 
-  const outputOptions = []
-
-  if (config.toggles.crf) {
-    outputOptions.push(`${buildStreamSuffix('-crf', streamNum)} ${config.crf}`)
-  }
-
-  if (config.toggles.preset) {
-    outputOptions.push(`${buildStreamSuffix('-preset', streamNum)} ${config.preset}`)
-  }
-
-  if (config.toggles.videoProfile) {
+  if (toggles.videoProfile) {
     outputOptions.push(`${buildStreamSuffix('-profile:v', streamNum)} ${config.videoProfile}`)
   }
 
-  if (maxrateKbps !== null && maxrateKbps !== undefined) {
-    outputOptions.push(`${buildStreamSuffix('-maxrate:v', streamNum)} ${maxrateKbps}k`)
-
-    if (config.toggles.bufsizeMultiplier) {
-      outputOptions.push(`${buildStreamSuffix('-bufsize:v', streamNum)} ${Math.round(maxrateKbps * config.bufsizeMultiplier)}k`)
-    }
+  if (toggles.pixelFormat) {
+    outputOptions.push(`-pix_fmt ${config.pixelFormat}`)
   }
 
-  if (config.toggles.pixelFormat) {
-    outputOptions.push(`${buildStreamSuffix('-pix_fmt', streamNum)} ${config.pixelFormat}`)
+  if (fps) {
+    outputOptions.push(`${buildStreamSuffix('-r:v', streamNum)} ${fps}`)
   }
 
-  if (config.toggles.videoOutputOptions && config.videoOutputOptions.length > 0) {
+  // PeerTube's live builder pins an average bitrate as well as the ceiling; its
+  // VOD builder does not.
+  if (isLiveStream(streamNum)) {
+    outputOptions.push(`${buildStreamSuffix('-b:v', streamNum)} ${target}`)
+  }
+
+  if (toggles.videoOutputOptions && config.videoOutputOptions.length > 0) {
     outputOptions.push(...config.videoOutputOptions)
   }
 
@@ -187,11 +153,11 @@ function buildVideoReencodeOptions (options) {
 
 module.exports = {
   PRESETS,
+  PEERTUBE_PRESET,
+  PEERTUBE_BUFSIZE_MULTIPLIER,
   normalizePreset,
   buildStreamSuffix,
   peertubeTargetBitrate,
-  shouldCopyVideo,
-  hasVideoEncodeOverride,
-  buildPeertubeDefaultVideoOptions,
+  getTargetBitrate,
   buildVideoReencodeOptions
 }
