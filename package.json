@@ -1,0 +1,40 @@
+{
+  "name": "peertube-plugin-ultimate-transcoding",
+  "version": "0.7.0",
+  "description": "Ultimate PeerTube transcoding controls with a cleaner settings UI, FFmpeg overrides, and high-quality audio passthrough",
+  "homepage": "https://github.com/vinybrun/peertube-plugin-ultimate-transcoding",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinybrun/peertube-plugin-ultimate-transcoding.git"
+  },
+  "engine": {
+    "peertube": ">=7.0.0"
+  },
+  "author": "Viny Brun Kriesang",
+  "license": "MIT",
+  "bugs": "https://github.com/vinybrun/peertube-plugin-ultimate-transcoding/issues",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "peertube",
+    "plugin",
+    "transcoding",
+    "ffmpeg",
+    "vod",
+    "x264",
+    "aac",
+    "ladder"
+  ],
+  "library": "./main.js",
+  "staticDirs": {},
+  "css": [],
+  "clientScripts": [
+    {
+      "script": "client/admin-plugin-client-plugin.js",
+      "scopes": [
+        "admin-plugin"
+      ]
+    }
+  ]
+}
