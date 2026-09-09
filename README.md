@@ -178,7 +178,7 @@ Recommended pipeline:
 1. Pre-encode the concert audio to stereo AAC-LC at 320 or 512 kbps, 44100 Hz (or 48000 Hz if you prefer video-world rates).
 2. Mux that audio into the uploaded file. Variable-bitrate AAC is fine; the plugin still treats it as copy-safe.
 3. In PeerTube, enable HLS split audio so 720p and 1080p share one audio track.
-4. In this plugin, set **Audio copy / passthrough** to **"Keep the uploaded audio, including with a separate audio track"**.
+4. In this plugin, set **Audio copy / passthrough** to **"Keep the uploaded audio in both MP4 files and the stream"**.
 5. Also enable **Audio bitrate** at 320 or 512 as the fallback for PCM / FLAC / MP3 sources that cannot be copied.
 
 That option is the recommended one because the split HLS audio track is its own
@@ -234,10 +234,22 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
 
 - Rewrite the **Audio copy / passthrough** options. They described PeerTube's
   internals ("only when PeerTube allows it", "audio-only / split jobs") rather
-  than what you get, and two of the four read as though they would keep your
-  audio when only one does so in a split-audio setup. They now say what happens
-  to the uploaded track, and the recommended one is marked. Stored values are
-  unchanged, so existing configurations keep working.
+  than the result, and picking correctly required knowing how `canCopyAudio`
+  works. Each option now states which outputs keep the uploaded audio, measured
+  rather than described:
+
+  | Option | Downloadable MP4 | Streamed audio |
+  | --- | --- | --- |
+  | Re-encode | re-encoded | re-encoded |
+  | MP4 files only | **kept** | re-encoded |
+  | Recommended | **kept** | **kept** |
+  | Advanced | **kept** | **kept** |
+
+  From a 320 kbps AAC upload, "kept" means 320 arrived intact and "re-encoded"
+  landed at ~244, since the AAC encoder shipped with PeerTube cannot reach 320
+  whatever bitrate is requested. The advanced option behaves identically to the
+  recommended one on PeerTube 8.x, which always gives HLS a separate audio
+  track. Stored values are unchanged, so existing configurations keep working.
 
 ### 0.7.2
 
