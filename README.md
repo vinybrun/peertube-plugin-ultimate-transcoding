@@ -91,7 +91,7 @@ This section keeps the web-playback and pipeline controls together:
 - H.264 profile
 - Pixel format
 - Scale filter override
-- Audio copy / passthrough mode (never, only when PeerTube allows it, audio-only / split jobs, or prefer compatible AAC)
+- Audio copy / passthrough mode — whether the uploaded audio is kept as-is or re-encoded
 
 ### Max Bitrate Per Resolution
 
@@ -178,15 +178,15 @@ Recommended pipeline:
 1. Pre-encode the concert audio to stereo AAC-LC at 320 or 512 kbps, 44100 Hz (or 48000 Hz if you prefer video-world rates).
 2. Mux that audio into the uploaded file. Variable-bitrate AAC is fine; the plugin still treats it as copy-safe.
 3. In PeerTube, enable HLS split audio so 720p and 1080p share one audio track.
-4. In this plugin, set **Audio copy / passthrough** to **Copy compatible AAC on audio-only / split jobs**.
+4. In this plugin, set **Audio copy / passthrough** to **"Keep the uploaded audio, including with a separate audio track"**.
 5. Also enable **Audio bitrate** at 320 or 512 as the fallback for PCM / FLAC / MP3 sources that cannot be copied.
 
-`audio-only` is the recommended mode because the split HLS audio track is its own
-file: copying it cannot desync anything. **Prefer compatible AAC** goes further and
-also copies the source audio into muxed renditions whose video is being re-encoded
-— that is the pairing PeerTube disabled over
+That option is the recommended one because the split HLS audio track is its own
+file, so copying it cannot desync anything. The last option in the list goes
+further and also keeps the audio inside renditions whose video is being re-encoded
+— the pairing PeerTube disabled over
 [#6438](https://github.com/Chocobozzz/PeerTube/issues/6438). Use it if you want the
-Web Video MP4s to keep the high-bitrate audio too, and check a long file for drift
+Web Video MP4s to carry the high-bitrate audio too, and check a long file for drift
 before trusting it on a full concert.
 
 If the source is still PCM or FLAC, the plugin cannot copy it into a web-safe player. It will re-encode to stereo AAC-LC at the configured bitrate instead of silently falling back to 128 kbps.
@@ -229,6 +229,15 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
 - Existing installs that only had "Copy audio when possible" checked are migrated to **Copy only when PeerTube allows it**. Switch them to **Prefer compatible AAC** if you want split-audio jobs to keep a 320+ kbps source.
 
 ## Changelog
+
+### 0.7.3
+
+- Rewrite the **Audio copy / passthrough** options. They described PeerTube's
+  internals ("only when PeerTube allows it", "audio-only / split jobs") rather
+  than what you get, and two of the four read as though they would keep your
+  audio when only one does so in a split-audio setup. They now say what happens
+  to the uploaded track, and the recommended one is marked. Stored values are
+  unchanged, so existing configurations keep working.
 
 ### 0.7.2
 

@@ -504,12 +504,12 @@ function registerCompatibilitySettings(registerSetting, audioCopyModeDefault) {
     type: 'select',
     default: audioCopyModeDefault,
     private: true,
-    descriptionHTML: 'PeerTube often sets <code>canCopyAudio=false</code> when it builds more than one resolution or a separate AAC track. In that case a simple "copy when possible" checkbox never fires, and ffmpeg falls back to 128 kbps. <strong>Prefer compatible AAC</strong> copies a stereo AAC-LC source even then, which is the right concert / CD pipeline if you pre-encode audio to AAC 320 or 512.',
+    descriptionHTML: 'Whether the audio you uploaded is kept exactly as it is, or re-encoded. Keeping it avoids a second lossy encode, so a pre-encoded AAC 320 stays 320 instead of being squeezed again.<br><br><strong>Not sure? Pick "including a separate audio track".</strong> It keeps your audio in the setups PeerTube actually uses — including HLS with a separate audio track, where PeerTube refuses to copy on its own and FFmpeg falls back to 128 kbps.<br><br>Audio is only ever kept when it is stereo AAC-LC. FLAC, PCM, MP3 and Opus cannot be kept and are always re-encoded to AAC at the bitrate set above. The last option also keeps audio in files whose video is being re-encoded; that combination can drift out of sync on long videos, which is why PeerTube disables it by default.',
     options: [
-      { label: 'Never copy (always re-encode)', value: 'off' },
-      { label: 'Copy only when PeerTube allows it', value: 'when-safe' },
-      { label: 'Copy compatible AAC on audio-only / split jobs', value: 'audio-only' },
-      { label: 'Prefer compatible AAC (recommended for concert / CD)', value: 'prefer-compatible' }
+      { label: 'Re-encode the audio always — never keep the uploaded track', value: 'off' },
+      { label: 'Keep the uploaded audio only where PeerTube allows it — not with a separate audio track', value: 'when-safe' },
+      { label: 'Keep the uploaded audio, including with a separate audio track — recommended', value: 'audio-only' },
+      { label: 'Keep the uploaded audio everywhere, even mixed into each resolution — advanced', value: 'prefer-compatible' }
     ]
   })
 }
