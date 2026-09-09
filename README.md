@@ -199,6 +199,42 @@ ffprobe -hide_banner -select_streams a:0 \
   -of default=noprint_wrappers=1 file.mp4
 ```
 
+### Getting the highest bitrate possible
+
+The ceiling is the codec, and it is lower than the numbers you can type. AAC-LC
+stereo at 44.1 kHz saturates around **530 kbps** — `libfdk_aac` returns the same
+529611 bps whether you ask for 576k or 640k. There is nothing above that short of
+a lossless codec, which PeerTube's HLS manifest cannot describe (it labels any
+unrecognised audio as AAC, so the player refuses to decode it).
+
+So the maximum is: encode at the ceiling yourself, and have the plugin copy it
+through untouched.
+
+```bash
+ffmpeg -i master.wav \
+  -c:a libfdk_aac -b:a 576k -ar 44100 -ac 2 \
+  -c:v copy output.mp4
+```
+
+Asking for 576k deliberately overshoots; the encoder gives you the ~530 kbps
+ceiling. Then set **Audio copy / passthrough** to *"Keep the uploaded audio in
+both MP4 files and the stream"*.
+
+Measured end to end on PeerTube 8.2.4: 529611 bps in, 529611 in every Web Video
+file, 529200 on the HLS audio track, playing in the browser.
+
+**Your encoder has to be able to reach the target.** FFmpeg's built-in `aac`
+encoder saturates near 244 kbps on real music no matter what `-b:a` says, and it
+is the only AAC encoder in the official PeerTube Docker image. Use `libfdk_aac`,
+or Apple's encoder via `qaac` / `afconvert`, and check the result with ffprobe
+before uploading.
+
+**Is it worth it?** AAC-LC at 320 kbps is already transparent for music and is
+the bitrate every device has seen a thousand times. 512–530 is headroom rather
+than audible gain, and it is well beyond what most hardware decoders are usually
+asked to do. It plays in the browser — that is tested — but 320 is the safer
+default if the video needs to work everywhere.
+
 ### Judge the command, not only the measured bitrate
 
 FFmpeg's native `aac` encoder undershoots its target on simple material. A job
