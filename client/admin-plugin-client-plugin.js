@@ -61,8 +61,13 @@ function parseBoolean (value, fallback) {
   return fallback
 }
 
+// PeerTube 8.x renders plugin settings with an `id` and no `name` attribute, so
+// document.getElementsByName() finds nothing at all. Match either, so this keeps
+// working on the older markup too.
 function getNamedControls (name) {
-  return Array.from(document.getElementsByName(name)).filter(function (control) {
+  const selector = '[id="' + name + '"], [name="' + name + '"]'
+
+  return Array.from(document.querySelectorAll(selector)).filter(function (control) {
     if (!control || !control.tagName) return false
 
     const tagName = control.tagName.toLowerCase()
@@ -85,17 +90,20 @@ function getControlValue (control) {
   return control.value
 }
 
+// Read our own settings by name via getNamedControls(), which matches on id as
+// well. Scanning for `[name]` finds nothing on PeerTube 8.x, which left every
+// toggle reading as false and every dependent field permanently disabled.
 function getFormValuesFromDom () {
   const values = {}
-  const controls = Array.from(document.querySelectorAll('input[name], select[name], textarea[name]'))
 
-  for (const control of controls) {
-    if (control.tagName && control.tagName.toLowerCase() === 'input' && control.type === 'hidden') continue
+  for (const name of OWN_SETTING_NAMES) {
+    const control = getNamedControls(name)[0]
+    if (!control) continue
 
     const value = getControlValue(control)
     if (typeof value === 'undefined') continue
 
-    values[control.name] = value
+    values[name] = value
   }
 
   return values

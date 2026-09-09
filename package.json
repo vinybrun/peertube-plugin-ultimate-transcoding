@@ -12,6 +12,15 @@
   },
   "author": "Viny Brun Kriesang",
   "license": "MIT",
+  "files": [
+    "main.js",
+    "audio-policy.js",
+    "video-policy.js",
+    "stream-flags.js",
+    "client/",
+    "README.md",
+    "LICENSE"
+  ],
   "bugs": "https://github.com/vinybrun/peertube-plugin-ultimate-transcoding/issues",
   "scripts": {
     "test": "node --test test/*.test.js"

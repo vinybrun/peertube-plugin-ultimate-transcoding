@@ -23,32 +23,36 @@ Mark each item `pass`, `fail`, or `n/a`. Failures should quote the ffmpeg comman
 
 ---
 
-## 0. Hunt these first
+## 0. Hunt list — resolved in 0.7.1 / 0.7.2
 
-These are already suggested by the 8.2.4 source and by the local 0.7.0 run. Confirm or close them before expanding coverage.
+Kept as the record of what was found and how it was closed. Re-check these after
+any change to the builders.
 
-- [ ] **Selecting this profile replaces PeerTube’s default x264 builder.** With every video toggle OFF, a 1080p upload must not silently lose PeerTube’s `-preset veryfast`, `-maxrate`, `-bufsize`, `-b_strategy`, `-bf`. Today the plugin returns `{}` for video, so ffmpeg/x264 defaults apply instead of PeerTube’s ladder.
-- [ ] **`Copy video when possible` + a lower rung.** Web Video 720p from a 1080p source still gets `canCopyVideo=true`. If the checkbox is on, the plugin returns `{ copy: true }` and PeerTube still adds `-vf scale=…`. Expect a broken or unscaled 720p file.
-- [ ] **Same copy-video checkbox on live.** Live always passes `canCopyVideo=true` and then scales in a filter graph. `{ copy: true }` becomes `-c:v:N copy` on filtered raw video. Expect live failure or a single unscaled variant.
-- [ ] **Live video flags have no stream suffix.** `-crf`, `-preset`, `-maxrate`, `-bufsize`, `-profile:v`, `-pix_fmt` are emitted globally. With 1080+720 live, one ffmpeg process muxes several streams. Confirm each variant actually got its own cap/CRF, not the last flag winning.
-- [ ] **Live audio `-channel_layout stereo` has no stream suffix** even though `-b:a:N` does. Confirm stereo is applied only to the audio stream.
-- [ ] **Preset `veryfast` / `faster` / `ultrafast` are rejected.** `normalizePreset()` only allows `fast|medium|slow|slower|veryslow` and silently falls back to `slow`. The admin UI cannot pick `veryfast` either. PeerTube’s own default is `veryfast`.
-- [ ] **Encoder priorities do not reload on Save.** `applyEncoderPriorities()` runs only in `register()`. Changing AAC / libx264 / libfdk priority in the UI and saving must have no effect until PeerTube restart. After restart, confirm old priorities are not stacked twice.
-- [ ] **Container bitrate mistaken for audio bitrate.** `inspectAudioStream()` falls back to `format.bit_rate` (video+audio). A VBR/FLAC/MKV source with no `stream.bit_rate` can request `-b:a 384k` because the container is 8 Mbps. Check a FLAC-in-MKV upload with the audio-bitrate toggle OFF.
-- [ ] **HE-AAC is treated as copy-safe.** `codec_name=aac` and stereo passes `isSafeToCopyAac()`. Prefer-compatible will copy HE-AAC / HE-AACv2. Check Chrome, Safari, and old Android.
-- [ ] **HLS `copyCodecs` bypasses the plugin.** If the source is already H.264 yuv420p at the same resolution/fps and PeerTube decides the file is “quick transcodable”, HLS uses `presetCopy` and never calls the builders. Plugin CRF/bitrate/audio settings must not apply on that job. Confirm when this fires and that it is documented.
-- [ ] **Web Video “optimize” quick-transcode also bypasses the plugin.** Same as above for the first max-resolution Web Video job.
-- [ ] **`prefer-compatible` copies 128 kbps AAC instead of lifting it to 320.** That is current design (copy never invents bits). Confirm we want that, and that the fallback bitrate only applies when we *re-encode*.
-- [ ] **ffmpeg native `aac` does not hit `-b:a 320k` on simple tones.** Local sine fixtures landed ~236 kbps. Retest with broadband music/noise before calling 320 “broken”.
-- [ ] **Debian/Trixie PeerTube image has no `libfdk_aac`.** Official `chocobozzz/peertube:v8.2.4-trixie` skips it. Priority settings for libfdk are dead on stock Docker. Test once with a build that actually has it.
-- [ ] **`package.json` `bugs` must be a URL string.** An object `{ url: … }` makes PeerTube refuse to install. Keep a regression test on install.
+- [x] **Selecting this profile replaces PeerTube's default x264 builder.** Confirmed: `getEncoderBuilderResult()` looks up `encoders[encoder][profile]` and only falls back to `default` when the key is missing, so an empty return drops `-preset veryfast`, `-maxrate`, `-bufsize`, `-b_strategy`, `-bf`. Fixed in 0.7.1 for the no-override case and in 0.7.2 for the partial-override case, where a single enabled rendition cap still handed every *other* rung an empty builder.
+- [x] **`Copy video when possible` + a lower rung.** Confirmed a hard job failure: `Filtergraph 'scale=w=-2:h=1080' was specified, but codec copy was selected`. 0.7.1 refused the copy; 0.7.2 removed the setting, since `transcoding-resolutions.ts` only emits the unscaled 0p rung when the input has audio and that rung goes to the audio builder — a video job is never unscaled.
+- [x] **Same copy-video checkbox on live.** Same root cause, same fix. Live scales in a filter graph (`[vtempN]scale=…[voutN]`).
+- [x] **Live video flags have no stream suffix.** 0.7.1 suffixed them and got it backwards: a bare `-crf:1` is an *output stream index*, not video rung 1. Live output order is `-map` order and `splitAudioAndVideo: true` is hardcoded for live, so index 0 is always the audio track — rung 0's `-crf:0 -preset:0 -bf:0` landed on it every time. 0.7.2 only suffixes flags that already name a stream type. Verified against a real RTMP stream: each rung carries its own `-maxrate:v:N` / `-bufsize:v:N` / `-b:v:N` / `-r:v:N`, while `-preset`, `-crf`, `-bf`, `-b_strategy` stay global.
+- [x] **Live audio `-channel_layout stereo` has no stream suffix.** Correct as it was, and correct again now. Verified live: `-c:a:0 aac -channel_layout stereo -b:a:0 256k -ar 48000 -profile:a:0 aac_low`.
+- [x] **Preset `veryfast` / `faster` / `ultrafast` are rejected.** Confirmed; `PRESETS` is the full x264 list as of 0.7.1.
+- [x] **Encoder priorities do not reload on Save.** Confirmed; `installProfiles()` now re-runs on settings change. Note `removeAllProfilesAndEncoderPriorities()` + re-add is synchronous in one tick, so an in-flight job cannot observe the gap.
+- [x] **Container bitrate mistaken for audio bitrate.** Fixed in 0.7.1: `format.bit_rate` is only used when the probe has no video stream.
+- [x] **HE-AAC is treated as copy-safe.** Fixed in 0.7.1 via `isHeAacProfile()`. Still **untested against a real HE-AAC fixture** — the available libfdk build refuses to encode AOT 5.
+- [x] **`package.json` `bugs` must be a URL string.** Confirmed: an object fails install with `PackageJSON is invalid (invalid fields: "bugs")`.
+
+## 0b. Confirmed PeerTube behaviour, not plugin bugs
+
+- [ ] **HLS `copyCodecs` bypasses the plugin.** If PeerTube decides the file is already web-safe at that resolution/fps, HLS uses `presetCopy` and never calls the builders. Plugin settings must not apply on that job. Documented; re-confirm when it fires.
+- [ ] **Web Video "optimize" quick-transcode also bypasses the plugin.** Same for the first max-resolution job.
+- [x] **`prefer-compatible` copies 128 kbps AAC instead of lifting it to 320.** Intended: copying never invents bits, and the fallback bitrate only applies on re-encode. Documented in the README.
+- [x] **ffmpeg native `aac` does not hit `-b:a 320k` on simple tones.** Encoder behaviour on low-complexity material, not a dropped setting. Documented in the README; judge the command line.
+- [x] **Debian/Trixie PeerTube image has no `libfdk_aac`.** `chocobozzz/peertube:v8.2.4-trixie` ships `libx264` + `aac` only, so libfdk priority is inert there. Also note PeerTube's own defaults are `libfdk_aac: 200` / `aac: 100`, so a priority at or below those changes nothing.
 
 ---
 
 ## 1. Install, profile, and process wiring
 
 - [ ] Install from disk (`--plugin-path`) on 8.2.4.
-- [ ] Install from npm (once 0.7.0 is published).
+- [ ] Install from npm (once 0.7.2 is published; the registry served 0.6.2 for a long time).
 - [ ] Reinstall after editing `main.js` / `audio-policy.js` and restart; new server code is actually loaded.
 - [ ] Client script loads on **Administration → Plugins → ultimate-transcoding** (toggles, resolution rows, section save buttons).
 - [ ] Plugin appears in **VOD transcoding profile** and **Live transcoding profile**.
@@ -56,8 +60,8 @@ These are already suggested by the 8.2.4 source and by the local 0.7.0 run. Conf
 - [ ] Profile set to `ultimate-transcoding`: builders log `using ultimate-transcoding profile`.
 - [ ] VOD profile plugin / live profile default (and the reverse): only the selected side uses the plugin.
 - [ ] Uninstall: profile disappears, in-flight jobs do not crash the instance, new jobs use `default`.
-- [ ] Upgrade 0.6.2 → 0.7.0: old “Copy audio when possible” becomes `when-safe`, not `prefer-compatible`.
-- [ ] Fresh 0.7.0 install: audio copy mode defaults to `off`.
+- [x] Upgrade 0.6.2 → 0.7.2: old “Copy audio when possible” becomes `when-safe`, not `prefer-compatible`. Verified by seeding the 0.6.x settings row and restarting: the registered default resolves to `when-safe` and other saved settings survive. The migration must **not** use `settingsManager.setSetting()` — it writes `settings.<name>` through Sequelize and rewrites the whole JSON column, dropping every other setting.
+- [ ] Fresh install: audio copy mode defaults to `off`.
 - [ ] Settings change applies to the **next** job, not the running one.
 - [ ] PeerTube restart keeps saved settings.
 
@@ -225,14 +229,14 @@ Video fixtures:
 
 ---
 
-## 7. Copy video
+## 7. Copy video — setting removed in 0.7.2
 
-- [ ] Checkbox OFF: video is always re-encoded (unless PeerTube quick-transcode/copyCodecs path).
-- [ ] Checkbox ON + identical H.264 yuv420p 1080→1080 Web Video: copy or re-encode? Log it.
-- [ ] Checkbox ON + 1080→720 Web Video: **must not** copy (hunt #2).
-- [ ] Checkbox ON + HLS split 1080: PeerTube forces `canCopyVideo=false` when `copyCodecs` is false. Plugin must re-encode.
-- [ ] Checkbox ON + live: must not copy (hunt #3).
-- [ ] Copy video ON + copy audio prefer-compatible: no A/V desync (PeerTube #6438 is why they disable both copies together).
+There is no video copy path any more. Every video job PeerTube hands a plugin
+carries a resolution, and every one of those gets a scale filter, so `copy: true`
+could only ever fail the job.
+
+- [ ] Video is always re-encoded, except on PeerTube's own quick-transcode / `copyCodecs` paths, which never call the builders at all.
+- [ ] Copy audio `prefer-compatible` on a muxed rendition whose video is re-encoded: check a long file for A/V drift (PeerTube #6438 is why they disable both copies together).
 
 ---
 
@@ -240,12 +244,17 @@ Video fixtures:
 
 Enable live + live transcoding + same plugin profile.
 
+Note: live always runs split (`splitAudioAndVideo: true` is hardcoded in
+`ffmpeg-transcoding-wrapper.ts`), so output stream 0 is always the audio track
+and video rungs start at index 1.
+
+- [x] 480+720+1080 live, audio copy `when-safe`: audio copied as `-c:a:0 copy`, three video rungs each with their own `-maxrate:v:N` / `-bufsize:v:N` / `-b:v:N` / `-r:v:N`, and `-preset` / `-crf` / `-bf` / `-b_strategy` global. Verified 2026-09-09 over real RTMP.
+- [x] Live audio re-encode: `-c:a:0 aac -channel_layout stereo -b:a:0 256k -ar 48000 -profile:a:0 aac_low`. Verified same session.
+- [x] Video per-rung maxrate actually differs between rungs: 1474578 / 3041318 / 3900000, with the 1080 rung capped at input+30%.
 - [ ] Single 1080p live, audio copy `off`, bitrate 320: listeners get AAC ~320, not 128.
-- [ ] 1080+720 live, split audio ON: one shared audio track at the configured policy.
-- [ ] 1080+720 live, split OFF: audio muxed in each variant, same bitrate.
 - [ ] AAC 320 ingest × `prefer-compatible`: copied, no transcode loop.
 - [ ] PCM / FDK / MP3 ingest: re-encoded, stereo AAC-LC.
-- [ ] Video CRF + per-rung maxrate actually differ between 720 and 1080 (hunt #4).
+- [ ] Actually watch a live stream end to end, not just read its command.
 - [ ] Restart / brief disconnect: playlist recovers.
 - [ ] Audio-only live (0p).
 - [ ] Live replay → VOD: replay files follow the VOD profile, not leftover live flags.
@@ -327,15 +336,21 @@ Profile `ultimate-transcoding`, HLS split ON, 1080+720+0p, copy `prefer-compatib
 | FLAC | same re-encode | |
 | AAC 128 | copied, ~127 kbps | expected for prefer-compatible |
 
-Not run yet: live, copy-video checkbox, HE-AAC, 5.1, studio, imports, libfdk, UI, encoder priorities, profile-with-video-toggles-off.
+Since updated for 0.7.2: live verified over real RTMP (both copy and re-encode
+audio paths, three rungs), partial-rendition-cap and CRF-override paths verified
+against the logged ffmpeg commands, and the 0.6.x settings migration verified by
+seeding the old row.
+
+Still not run: HE-AAC fixture, studio edition, URL import, dual audio, HDR, 4K,
+VFR, WHIP, real playback on Chrome / Safari / phones, and libfdk_aac (absent from
+the stock Docker image).
 
 ---
 
 ## 14. Suggested next session order
 
-1. Close or file the hunt list in section 0 (especially profile-replaces-defaults, copy-video+scale, live stream suffixes, preset list).
-2. Automate section 3.E × the four audio copy modes against the AAC 320 / PCM / 5.1 fixtures. That is the concert contract.
-3. Walk the admin UI once on desktop and a 400px viewport.
-4. One live 1080+720+split session.
-5. Playback on Chrome + Safari + a phone.
-6. Only then expand the long codec matrix.
+1. Automate section 3.E × the four audio copy modes against the AAC 320 / PCM / 5.1 fixtures. That is the concert contract.
+2. Playback on Chrome + Safari + a phone — nothing here has been watched by a human yet.
+3. Live replay → VOD, and audio-only (0p) live.
+4. A long-file A/V drift check for `prefer-compatible` on muxed renditions.
+5. Only then expand the long codec matrix.

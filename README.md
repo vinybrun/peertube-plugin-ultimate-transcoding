@@ -34,9 +34,16 @@ This plugin turns those documented controls into a usable admin interface. The b
 
 ## Installation
 
-The npm registry still serves `0.6.2`, which predates everything below. Until a
-newer version is published there, install from a release tarball or from disk —
-`npm install peertube-plugin-ultimate-transcoding` will give you the old plugin.
+From the PeerTube admin UI: **Administration → Plugins → Search plugins**, search
+for `ultimate-transcoding`, install. Or from the CLI:
+
+```bash
+npm install peertube-plugin-ultimate-transcoding
+```
+
+Install **0.7.2 or newer**. The registry served `0.6.2` for a long time, and that
+release predates the split-audio fix, the live stream-specifier fix, and the
+admin UI working at all on PeerTube 8.x.
 
 If you are testing locally from disk, install it with your normal local PeerTube plugin workflow.
 
@@ -217,6 +224,11 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
 
 ### 0.7.2
 
+- Fix the admin settings UI, which had never worked on PeerTube 8.x. The client
+  script looked its controls up with `document.getElementsByName()`, but 8.x
+  renders plugin settings with an `id` and no `name`, so nothing matched: no
+  dimming, no resolution rows, and every value field permanently locked
+  regardless of its checkbox.
 - Stop suffixing bare FFmpeg flags with the live stream number. `-crf:1` selects
   *output stream index 1*, not video rung 1, and live streams are ordered by
   `-map`: with split audio, index 0 is the audio track. `-crf`, `-preset`, `-bf`,
