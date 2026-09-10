@@ -198,6 +198,52 @@ ffprobe -hide_banner -select_streams a:0 \
   -of default=noprint_wrappers=1 file.mp4
 ```
 
+### Which AAC encoder you have
+
+PeerTube tries `libfdk_aac` first and falls back to `aac`. Which one is present
+decides what the audio bitrate setting can actually deliver. Measured from the
+same music source on PeerTube 8.2.4:
+
+| Requested | `aac` (built-in) | `libfdk_aac` |
+| --- | --- | --- |
+| 320 kbps | 232067 | 319999 |
+| 512 kbps | 227066 | 511999 |
+| 576 kbps | — | 529200 |
+
+The built-in encoder ignores the request and settles between 222 and 245 kbps
+depending on the material. `libfdk_aac` produces the requested value exactly
+until it saturates at about 530 kbps, the AAC-LC ceiling for stereo at 44.1 kHz.
+
+```bash
+ffmpeg -encoders | grep -E 'aac|fdk'
+```
+
+The official PeerTube Docker image ships only the built-in encoder. Most
+distribution FFmpeg packages omit `libfdk_aac` too, because its licence is
+incompatible with the GPL builds they distribute.
+
+**Adding `libfdk_aac` only helps if this profile is selected.** PeerTube's own
+libfdk profile passes no bitrate at all — it emits `-q:a 5`, a VBR quality
+target, which measured 139562 bps on that same source. An instance that installs
+libfdk but leaves transcoding on the `default` profile therefore ends up with
+*lower* bitrate audio than the built-in encoder was producing.
+
+### If your source is a lossless master
+
+Two routes reach the same place, one lossy encode from the master either way:
+
+- **Encode it yourself, and have the plugin copy it through.** You pick the
+  encoder, the upload stays small, and you can confirm the bitrate with ffprobe
+  before uploading.
+- **Upload the master and let PeerTube encode it.** No local encoding, but the
+  upload is large (CD PCM is ~1411 kbps) and it needs `libfdk_aac` on the server
+  with this profile selected and a bitrate set.
+
+The difference that matters is how they fail. The first fails visibly — you see
+the bitrate before you upload. The second fails silently: without `libfdk_aac`
+the audio comes out at ~230 kbps, and with libfdk but the `default` profile at
+~140, in both cases with no error.
+
 ### Getting the highest bitrate possible
 
 The ceiling is the codec, and it is lower than the numbers you can type. AAC-LC
@@ -258,6 +304,17 @@ track measures whatever the source was. Copying a 128 kbps AAC source gives you
 - Existing installs that only had "Copy audio when possible" checked are migrated to **Copy only when PeerTube allows it**. Switch them to **Prefer compatible AAC** if you want split-audio jobs to keep a 320+ kbps source.
 
 ## Changelog
+
+### 0.7.4
+
+- Document which AAC encoder is present and what it can deliver, in the audio
+  bitrate setting and in the README. FFmpeg's built-in `aac` encoder produces
+  222–245 kbps whatever bitrate is requested; `libfdk_aac` produces the
+  requested value exactly up to the ~530 kbps AAC-LC ceiling.
+- Record the trap this creates: PeerTube's own `libfdk_aac` profile passes no
+  bitrate at all, only `-q:a 5`, measured at 140 kbps. Installing `libfdk_aac`
+  while leaving transcoding on the `default` profile produces *lower* bitrate
+  audio than the built-in encoder did.
 
 ### 0.7.3
 

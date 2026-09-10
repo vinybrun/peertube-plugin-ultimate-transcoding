@@ -412,7 +412,7 @@ function registerQualitySettings(registerSetting) {
     registerSetting,
     'vod-audio-kbps',
     'Audio bitrate',
-    'Target passed to <code>-b:a</code> when audio is re-encoded. Unit: kbps. Has no effect on copied audio.<br><br>Measured on PeerTube 8.2.4 with music: FFmpeg\'s built-in <code>aac</code> encoder produces about 244 kbps whatever value is set here, and it is the only AAC encoder in the official Docker image. <code>libfdk_aac</code> reaches about 530 kbps, the AAC-LC ceiling for stereo at 44.1 kHz, and returns the same result for any higher value.'
+    'Target passed to <code>-b:a</code> when audio is re-encoded. Unit: kbps. Has no effect on copied audio.<br><br>What this value produces depends on which AAC encoder your FFmpeg has. Measured on PeerTube 8.2.4:<ul><li><code>aac</code>, FFmpeg\'s built-in encoder — 222 to 245 kbps whatever is set here. It is the only AAC encoder in the official PeerTube Docker image, and most distribution FFmpeg packages also omit the alternative.</li><li><code>libfdk_aac</code>, where present — produces this value exactly (192 gives 192, 300 gives 300, 512 gives 512) up to about 530 kbps, the AAC-LC ceiling for stereo at 44.1 kHz. Higher values return that same ceiling.</li></ul>Run <code>ffmpeg -encoders</code> to see which you have. Adding <code>libfdk_aac</code> only helps while this profile is selected: PeerTube\'s own profile passes no bitrate to it at all, only <code>-q:a 5</code>, which measured 140 kbps on the same source.'
   )
   registerSetting({
     name: 'vod-audio-kbps',
